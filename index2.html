@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Photo Booth (QL-1110)</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background:#0f0f0f; color:#eee; overflow:hidden; }
+    main { min-height: 100vh; height: 100vh; display:flex; align-items:center; justify-content:center; padding:0; }
+    .card { width: 100%; height: 100vh; background:#151515; border:0; border-radius:0; padding:0; }
+    .preview-wrap { width: 100%; height: 100%; display:flex; align-items:center; justify-content:center; }
+    canvas { width: 100%; height: 100%; border-radius:12px; background:#000; object-fit: contain; }
+    .row { display:flex; gap:12px; align-items:center; justify-content:center; flex-wrap:wrap; }
+    .controls { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+    button, select { font: inherit; }
+    button { padding:12px 16px; border-radius:12px; border:1px solid #333; background:#222; color:#eee; cursor:pointer; }
+    button.primary { background:#3a6; border-color:#3a6; color:#031; font-weight:700; }
+    button.print { background:#2b6cff; border-color:#2b6cff; color:#06173a; font-weight:700; }
+    button.danger { background:#a33; border-color:#a33; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    select { padding:10px 12px; border-radius:10px; border:1px solid #333; background:#222; color:#eee; }
+    input[type="range"] { width: 100%; }
+    .hint { font-size:12px; color:#aaa; text-align:center; }
+    .countdown { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:96px; font-weight:800; color:#fff; background:rgba(0,0,0,0.5); border-radius:12px; }
+    .flash { position:absolute; inset:0; background:#fff; opacity:0; border-radius:12px; transition:opacity 180ms ease; }
+    .flash.on { opacity:1; }
+    .stack { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+    .overlay-controls {
+      position:absolute;
+      left:50%;
+      bottom:24px;
+      transform:translateX(-50%);
+      display:flex;
+      gap:12px;
+      padding:12px 16px;
+      background:rgba(0,0,0,0.5);
+      border:1px solid #333;
+      border-radius:14px;
+      backdrop-filter: blur(6px);
+    }
+    .start-overlay {
+      position:absolute;
+      inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      background:rgba(0,0,0,0.55);
+      border-radius:12px;
+    }
+    .start-overlay.show { display:flex; }
+    .overlay-hint {
+      position:absolute;
+      left:50%;
+      top:18px;
+      transform:translateX(-50%);
+      font-size:12px;
+      color:#ddd;
+      background:rgba(0,0,0,0.45);
+      padding:8px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(6px);
+    }
+    .settings-btn {
+      position:fixed;
+      right:16px;
+      bottom:16px;
+      width:44px;
+      height:44px;
+      border-radius:50%;
+      border:1px solid #333;
+      background:#1f1f1f;
+      color:#eee;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .settings-panel {
+      position:fixed;
+      right:16px;
+      bottom:72px;
+      width: min(360px, 92vw);
+      background:#161616;
+      border:1px solid #333;
+      border-radius:12px;
+      padding:14px;
+      display:none;
+      gap:10px;
+      z-index:10;
+    }
+    .settings-panel.open { display:flex; flex-direction:column; }
+    .settings-panel label { font-size:12px; color:#bbb; }
+    .settings-panel .row { justify-content:flex-start; }
+    .settings-panel .slider { display:flex; flex-direction:column; gap:6px; }
+    .settings-preview { width: 100%; height: auto; border-radius:10px; background:#000; }
+    .auth-overlay {
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,0.6);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:20;
+    }
+    .auth-overlay.show { display:flex; }
+    .auth-card {
+      width: min(360px, 90vw);
+      background:#161616;
+      border:1px solid #333;
+      border-radius:12px;
+      padding:16px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .auth-card input {
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid #333;
+      background:#222;
+      color:#eee;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/qz-tray/qz-tray.js"></script>
+</head>
+<body>
+<main>
+  <div class="card">
+    <div class="preview-wrap">
+      <div class="stack" id="previewStack">
+        <video id="video" playsinline autoplay muted style="display:none;"></video>
+        <canvas id="preview" width="640" height="480"></canvas>
+        <div id="countdown" class="countdown" style="display:none;">3</div>
+        <div id="flash" class="flash"></div>
+        <div class="overlay-hint" id="hint">Start camera automatically. Capture to freeze, Retake to resume.</div>
+        <div class="overlay-controls">
+          <button id="btnCapture" class="primary">Capture</button>
+          <button id="btnRetake" class="danger" disabled>Retake</button>
+          <button id="btnPrint" class="print" disabled>Print</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<button class="settings-btn" id="settingsBtn" title="Settings">⚙</button>
+<div class="settings-panel" id="settingsPanel">
+  <div>
+    <label>Roll Size</label>
+    <select id="rollSelect">
+      <option value="2.44x3.90">2.44" x 3.90" (vertical)</option>
+      <option value="4.07x6.40">4.07" x 6.40" (vertical)</option>
+    </select>
+  </div>
+  <div>
+    <label>Printer</label>
+    <div class="row">
+      <select id="printerSelect" style="flex:1;"></select>
+      <button id="btnLoadPrinters">Load</button>
+    </div>
+  </div>
+  <div class="slider">
+    <label>Brightness</label>
+    <input id="brightness" type="range" min="-100" max="100" value="0" />
+  </div>
+  <div class="slider">
+    <label>Contrast</label>
+    <input id="contrast" type="range" min="-100" max="100" value="0" />
+  </div>
+  <div class="slider">
+    <label>Gamma</label>
+    <input id="gamma" type="range" min="50" max="200" value="100" />
+  </div>
+  <div class="slider">
+    <label>
+      <input id="invertPrint" type="checkbox" />
+      Calibrate (invert print)
+    </label>
+  </div>
+  <div class="row">
+    <button id="btnResetCal">Reset Calibration</button>
+  </div>
+  <div class="slider">
+    <label>Adjusted Preview</label>
+    <canvas id="settingsPreview" class="settings-preview" width="240" height="180"></canvas>
+  </div>
+  <div class="slider">
+    <label>
+      <input id="showStatus" type="checkbox" checked />
+      Show Status Banner
+    </label>
+  </div>
+  <div class="row">
+    <button id="btnCloseSettings">Close</button>
+  </div>
+</div>
+
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card">
+    <label>Settings password</label>
+    <input id="authPassword" type="password" />
+    <div class="row">
+      <button id="authCancel">Cancel</button>
+      <button id="authOk" class="primary">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const video = document.getElementById('video');
+  const preview = document.getElementById('preview');
+  const pctx = preview.getContext('2d', { willReadFrequently: true });
+  const countdownEl = document.getElementById('countdown');
+  const flashEl = document.getElementById('flash');
+  const btnCapture = document.getElementById('btnCapture');
+  const btnRetake = document.getElementById('btnRetake');
+  const btnPrint = document.getElementById('btnPrint');
+  const rollSelect = document.getElementById('rollSelect');
+  const hint = document.getElementById('hint');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsPanel = document.getElementById('settingsPanel');
+  const btnCloseSettings = document.getElementById('btnCloseSettings');
+  const authOverlay = document.getElementById('authOverlay');
+  const authPassword = document.getElementById('authPassword');
+  const authCancel = document.getElementById('authCancel');
+  const authOk = document.getElementById('authOk');
+  const showStatus = document.getElementById('showStatus');
+  const printerSelect = document.getElementById('printerSelect');
+  const btnLoadPrinters = document.getElementById('btnLoadPrinters');
+  const brightness = document.getElementById('brightness');
+  const contrast = document.getElementById('contrast');
+  const gamma = document.getElementById('gamma');
+  const invertPrint = document.getElementById('invertPrint');
+  const btnResetCal = document.getElementById('btnResetCal');
+  const settingsPreview = document.getElementById('settingsPreview');
+  const spctx = settingsPreview.getContext('2d', { willReadFrequently: true });
+
+  let stream = null;
+  let rafId = null;
+  let frozen = false;
+  let lastCapturedDataURL = null;
+  let lastCapturedCanvas = null;
+  let qzSecurityReady = false;
+
+  const SETTINGS_PASSWORD = '1234';
+
+  const work = document.createElement('canvas');
+  const wctx = work.getContext('2d', { willReadFrequently: true });
+  const settingsWork = document.createElement('canvas');
+  const swctx = settingsWork.getContext('2d', { willReadFrequently: true });
+  const gammaCache = new Map();
+  function saveSetting(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch (_) {}
+  }
+
+  function loadSetting(key, fallback = '') {
+    try { return localStorage.getItem(key) || fallback; } catch (_) { return fallback; }
+  }
+
+  async function setupQZSecurity() {
+    if (qzSecurityReady) return;
+    const cert = await fetch('/qz/cert', { cache: 'no-store' }).then(r => {
+      if (!r.ok) throw new Error('Failed to load QZ certificate');
+      return r.text();
+    });
+    qz.security.setCertificatePromise((resolve, reject) => {
+      if (!cert) {
+        reject(new Error('Missing QZ certificate'));
+        return;
+      }
+      resolve(cert);
+    });
+    qz.security.setSignatureAlgorithm('SHA512');
+    qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+      const payload = (typeof toSign === 'string') ? toSign : JSON.stringify(toSign);
+      fetch('/qz/sign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: payload
+      }).then(r => {
+        if (!r.ok) throw new Error('Signature failed');
+        return r.text();
+      }).then(resolve).catch(reject);
+    });
+    qzSecurityReady = true;
+  }
+
+  async function connectQZ() {
+    if (!qzSecurityReady) {
+      await setupQZSecurity();
+    }
+    if (!qz.websocket.isActive()) {
+      await qz.websocket.connect();
+    }
+  }
+
+  async function loadPrinters() {
+    await connectQZ();
+    const printers = await qz.printers.find();
+    printerSelect.innerHTML = '';
+    for (const p of printers) {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      printerSelect.appendChild(opt);
+    }
+    const saved = loadSetting('pb_printer', '');
+    if (saved) printerSelect.value = saved;
+    if (!printerSelect.value && printers.length > 0) {
+      printerSelect.value = printers[0];
+    }
+  }
+
+
+  function getRollSize() {
+    if (rollSelect.value === '4.07x6.40') {
+      return { widthIn: 4.07, heightIn: 6.40, name: '4.07" x 6.40"' };
+    }
+    return { widthIn: 2.44, heightIn: 3.90, name: '2.44" x 3.90"' };
+  }
+
+  function resizePreview() {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = preview.parentElement.clientWidth || 640;
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    const ratio = (vw > 0 && vh > 0) ? (vh / vw) : (480 / 640);
+    const cssH = Math.max(1, Math.round(cssW * ratio));
+    preview.style.width = cssW + 'px';
+    preview.style.height = cssH + 'px';
+    preview.width = Math.round(cssW * dpr);
+    preview.height = Math.round(cssH * dpr);
+    work.width = preview.width;
+    work.height = preview.height;
+  }
+
+  function getGammaLUT(g) {
+    const key = g.toFixed(3);
+    if (gammaCache.has(key)) return gammaCache.get(key);
+    const lut = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++) {
+      lut[i] = Math.max(0, Math.min(255, Math.round(255 * Math.pow(i / 255, 1 / g))));
+    }
+    gammaCache.set(key, lut);
+    return lut;
+  }
+
+  function getAdjustments(invert) {
+    const b = parseInt(brightness.value, 10);
+    const c = parseInt(contrast.value, 10);
+    const g = parseInt(gamma.value, 10) / 100;
+    if (!invert) return { b, c, g };
+    const invGamma = g !== 0 ? (1 / g) : 1;
+    return { b: -b, c: -c, g: invGamma };
+  }
+
+  function applyGrayscale(imgData, b, c, g) {
+    const cf = (259 * (c + 255)) / (255 * (259 - c));
+    const gammaLUT = getGammaLUT(g);
+    const data = imgData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      let v = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      v = v + b;
+      v = cf * (v - 128) + 128;
+      v = Math.max(0, Math.min(255, v));
+      v = gammaLUT[v | 0];
+      data[i] = data[i + 1] = data[i + 2] = v;
+      data[i + 3] = 255;
+    }
+  }
+
+  function drawPreview() {
+    if (frozen) return;
+    if (!stream || video.readyState < 2) {
+      rafId = requestAnimationFrame(drawPreview);
+      return;
+    }
+
+    wctx.drawImage(video, 0, 0, work.width, work.height);
+    const img = wctx.getImageData(0, 0, work.width, work.height);
+    applyGrayscale(img, 0, 0, 1);
+    pctx.putImageData(img, 0, 0);
+    renderSettingsPreview();
+    rafId = requestAnimationFrame(drawPreview);
+  }
+
+  function resizeSettingsPreview() {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = settingsPreview.parentElement.clientWidth || 240;
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    const ratio = (vw > 0 && vh > 0) ? (vh / vw) : (180 / 240);
+    const cssH = Math.max(1, Math.round(cssW * ratio));
+    settingsPreview.style.width = cssW + 'px';
+    settingsPreview.style.height = cssH + 'px';
+    settingsPreview.width = Math.round(cssW * dpr);
+    settingsPreview.height = Math.round(cssH * dpr);
+    settingsWork.width = settingsPreview.width;
+    settingsWork.height = settingsPreview.height;
+  }
+
+  function drawContain(ctx, src, dstW, dstH) {
+    const srcW = src.videoWidth || src.width;
+    const srcH = src.videoHeight || src.height;
+    if (!srcW || !srcH) return;
+    const scale = Math.min(dstW / srcW, dstH / srcH);
+    const dw = Math.round(srcW * scale);
+    const dh = Math.round(srcH * scale);
+    const dx = Math.round((dstW - dw) / 2);
+    const dy = Math.round((dstH - dh) / 2);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, dstW, dstH);
+    ctx.drawImage(src, 0, 0, srcW, srcH, dx, dy, dw, dh);
+  }
+
+  function renderSettingsPreview() {
+    if (!settingsPanel.classList.contains('open')) return;
+    const src = frozen && lastCapturedCanvas ? lastCapturedCanvas : video;
+    if (!src) return;
+    resizeSettingsPreview();
+    drawContain(swctx, src, settingsWork.width, settingsWork.height);
+    const img = swctx.getImageData(0, 0, settingsWork.width, settingsWork.height);
+    const adj = getAdjustments(false);
+    applyGrayscale(img, adj.b, adj.c, adj.g);
+    spctx.putImageData(img, 0, 0);
+  }
+
+  async function startCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      if (!video.videoWidth) {
+        await new Promise(resolve => {
+          const onMeta = () => {
+            video.removeEventListener('loadedmetadata', onMeta);
+            resolve();
+          };
+          video.addEventListener('loadedmetadata', onMeta);
+          setTimeout(resolve, 800);
+        });
+      }
+      resizePreview();
+      frozen = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      drawPreview();
+      hint.textContent = 'Live preview running.';
+    } catch (e) {
+      console.error(e);
+      hint.textContent = 'Camera permission denied or unavailable.';
+    }
+  }
+
+  function flash() {
+    flashEl.classList.add('on');
+    setTimeout(() => flashEl.classList.remove('on'), 200);
+  }
+
+  async function runCountdown() {
+    countdownEl.style.display = 'flex';
+    for (let i = 3; i >= 1; i--) {
+      countdownEl.textContent = String(i);
+      await new Promise(r => setTimeout(r, 700));
+    }
+    countdownEl.style.display = 'none';
+  }
+
+  async function capture() {
+    if (!stream || video.readyState < 2) return;
+    btnCapture.disabled = true;
+    await runCountdown();
+    flash();
+
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+    const full = document.createElement('canvas');
+    full.width = vw;
+    full.height = vh;
+    const fctx = full.getContext('2d', { willReadFrequently: true });
+    fctx.drawImage(video, 0, 0, vw, vh);
+
+    const img = fctx.getImageData(0, 0, vw, vh);
+    applyGrayscale(img, 0, 0, 1);
+    fctx.putImageData(img, 0, 0);
+
+    // Freeze preview
+    frozen = true;
+    if (rafId) cancelAnimationFrame(rafId);
+    resizePreview();
+    pctx.drawImage(full, 0, 0, preview.width, preview.height);
+
+    lastCapturedDataURL = full.toDataURL('image/png');
+    lastCapturedCanvas = full;
+    btnRetake.disabled = false;
+    btnPrint.disabled = false;
+    btnCapture.disabled = false;
+    hint.textContent = 'Captured. Ready to print.';
+    renderSettingsPreview();
+  }
+
+  function retake() {
+    frozen = false;
+    btnRetake.disabled = true;
+    btnPrint.disabled = true;
+    hint.textContent = 'Live preview running.';
+    drawPreview();
+  }
+
+  async function renderForPrint() {
+    if (!lastCapturedDataURL) return null;
+    const { widthIn, heightIn } = getRollSize();
+    const rotateForRoll = rollSelect.value === '2.44x3.90';
+    const dpi = 300;
+    const outW = Math.round(widthIn * dpi);
+    const outH = Math.round(heightIn * dpi);
+
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = outW; c.height = outH;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, outW, outH);
+
+        let src = img;
+        if (rotateForRoll) {
+          const r = document.createElement('canvas');
+          r.width = img.height;
+          r.height = img.width;
+          const rctx = r.getContext('2d');
+          rctx.translate(r.width / 2, r.height / 2);
+          rctx.rotate(-Math.PI / 2);
+          rctx.drawImage(img, -img.width / 2, -img.height / 2);
+          src = r;
+        }
+
+        // Cover fit
+        const srcW = src.width, srcH = src.height;
+        const srcAspect = srcW / srcH;
+        const dstAspect = outW / outH;
+        let sx = 0, sy = 0, sw = srcW, sh = srcH;
+        if (srcAspect > dstAspect) {
+          sh = srcH;
+          sw = Math.round(srcH * dstAspect);
+          sx = Math.round((srcW - sw) / 2);
+        } else {
+          sw = srcW;
+          sh = Math.round(srcW / dstAspect);
+          sy = Math.round((srcH - sh) / 2);
+        }
+        ctx.drawImage(src, sx, sy, sw, sh, 0, 0, outW, outH);
+
+        const imgData = ctx.getImageData(0, 0, outW, outH);
+        const adj = getAdjustments(invertPrint.checked);
+        applyGrayscale(imgData, adj.b, adj.c, adj.g);
+        ctx.putImageData(imgData, 0, 0);
+
+        resolve(c.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = lastCapturedDataURL;
+    });
+  }
+
+  async function print() {
+    try { await connectQZ(); } catch (e) { console.error(e); }
+    if (!printerSelect.options.length) {
+      await loadPrinters();
+    }
+    const printerName = printerSelect.value || printerSelect.options[0]?.value;
+    if (!printerName) {
+      hint.textContent = 'No printer found.';
+      return;
+    }
+
+    const dataURL = await renderForPrint();
+    if (!dataURL) return;
+
+    const { widthIn, heightIn, name } = getRollSize();
+    const cfg = qz.configs.create(printerName, {
+      scaleContent: false,
+      rasterize: true,
+      orientation: 'portrait',
+      size: { width: widthIn, height: heightIn, units: 'in', name }
+    });
+
+    try {
+      await qz.print(cfg, [{
+        type: 'pixel',
+        format: 'image',
+        flavor: 'base64',
+        data: dataURL.split(',')[1]
+      }]);
+      hint.textContent = 'Print sent.';
+      frozen = false;
+      btnRetake.disabled = true;
+      btnPrint.disabled = true;
+      drawPreview();
+    } catch (e) {
+      console.error(e);
+      hint.textContent = 'Print failed. Check QZ/printer.';
+    }
+  }
+
+  btnCapture.addEventListener('click', capture);
+  btnRetake.addEventListener('click', retake);
+  btnPrint.addEventListener('click', print);
+  btnLoadPrinters.addEventListener('click', loadPrinters);
+  printerSelect.addEventListener('change', () => saveSetting('pb_printer', printerSelect.value));
+  rollSelect.addEventListener('change', () => saveSetting('pb_roll', rollSelect.value));
+  brightness.addEventListener('input', () => saveSetting('pb_brightness', brightness.value));
+  contrast.addEventListener('input', () => saveSetting('pb_contrast', contrast.value));
+  gamma.addEventListener('input', () => saveSetting('pb_gamma', gamma.value));
+  brightness.addEventListener('input', renderSettingsPreview);
+  contrast.addEventListener('input', renderSettingsPreview);
+  gamma.addEventListener('input', renderSettingsPreview);
+  invertPrint.addEventListener('change', () => {
+    saveSetting('pb_invert', invertPrint.checked ? 'true' : 'false');
+    renderSettingsPreview();
+  });
+  btnResetCal.addEventListener('click', () => {
+    brightness.value = 0;
+    contrast.value = 0;
+    gamma.value = 100;
+    invertPrint.checked = false;
+    saveSetting('pb_brightness', brightness.value);
+    saveSetting('pb_contrast', contrast.value);
+    saveSetting('pb_gamma', gamma.value);
+    saveSetting('pb_invert', 'false');
+    renderSettingsPreview();
+  });
+
+  function openAuth() {
+    authPassword.value = '';
+    authOverlay.classList.add('show');
+    authPassword.focus();
+  }
+
+  function closeAuth() {
+    authOverlay.classList.remove('show');
+  }
+
+  function unlockSettings() {
+    if (authPassword.value !== SETTINGS_PASSWORD) return;
+    closeAuth();
+    settingsPanel.classList.add('open');
+    loadPrinters();
+    renderSettingsPreview();
+  }
+
+  settingsBtn.addEventListener('click', openAuth);
+  authCancel.addEventListener('click', closeAuth);
+  authOk.addEventListener('click', unlockSettings);
+  authPassword.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') unlockSettings();
+    if (e.key === 'Escape') closeAuth();
+  });
+  btnCloseSettings.addEventListener('click', () => settingsPanel.classList.remove('open'));
+  showStatus.addEventListener('change', () => {
+    hint.style.display = showStatus.checked ? 'block' : 'none';
+    saveSetting('pb_showStatus', showStatus.checked ? 'true' : 'false');
+  });
+
+  window.addEventListener('load', () => {
+    setupQZSecurity().catch((e) => {
+      console.error(e);
+      hint.textContent = 'QZ signing backend not ready.';
+    });
+    const savedRoll = loadSetting('pb_roll', '');
+    if (savedRoll) rollSelect.value = savedRoll;
+    brightness.value = loadSetting('pb_brightness', brightness.value);
+    contrast.value = loadSetting('pb_contrast', contrast.value);
+    gamma.value = loadSetting('pb_gamma', gamma.value);
+    invertPrint.checked = loadSetting('pb_invert', 'false') === 'true';
+    showStatus.checked = loadSetting('pb_showStatus', 'true') === 'true';
+    hint.style.display = showStatus.checked ? 'block' : 'none';
+    startCamera();
+  });
+
+  window.addEventListener('resize', () => {
+    resizePreview();
+  });
+</script>
+</body>
+</html>

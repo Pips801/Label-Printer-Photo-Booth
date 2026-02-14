@@ -9,6 +9,9 @@
     body { margin: 0; background:#111; color:#eee; }
     header { padding: 12px 16px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #222; }
     main { display:grid; grid-template-columns: 1fr 420px; gap: 16px; padding: 16px; }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; padding: 12px; }
+    }
     .card { background:#181818; border:1px solid #222; border-radius:12px; padding: 12px; }
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     button, select, input[type="range"], input[type="text"] {
@@ -26,6 +29,7 @@
     input[type="range"] { width: 100%; }
     video { width: 100%; border-radius: 12px; background:#000; }
     canvas { width: 100%; border-radius: 12px; background:#000; image-rendering: pixelated; }
+    .preview-wrap { width: 100%; }
     .small { font-size: 12px; color:#aaa; }
     .pill { display:inline-block; padding:4px 8px; border:1px solid #333; border-radius:999px; font-size:12px; color:#bbb; }
     .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -61,7 +65,13 @@
       </label>
     </div>
 
-    <video id="video" playsinline autoplay muted></video>
+    <video id="video" playsinline autoplay muted style="display:none;"></video>
+    <div class="preview-wrap">
+      <canvas id="preview" width="480" height="640"></canvas>
+      <div class="small mt8">
+        Preview renders at lower resolution for speed. Print renders at full width (4" @ 300 dpi = 1200 px).
+      </div>
+    </div>
 
     <div class="grid2 mt12">
       <div>
@@ -126,14 +136,6 @@
     </div>
 
     <div class="mt12">
-      <label>Processed Preview</label>
-      <canvas id="preview" width="480" height="640"></canvas>
-      <div class="small mt8">
-        Preview renders at lower resolution for speed. Print renders at full width (4" @ 300 dpi = 1200 px).
-      </div>
-    </div>
-
-    <div class="mt12">
       <label>Label Settings</label>
       <div class="grid2 mt8">
         <div>
@@ -142,7 +144,7 @@
             <option value="cont_24">2.4" Continuous</option>
             <option value="die_24x39">2.4" Die Cut (2.4 x 3.9 in)</option>
             <option value="cont_40">4.0" Continuous</option>
-            <option value="die_4x6">4.0" Die Cut (4 x 6 in)</option>
+            <option value="die_4x6">4.07" Die Cut (4.07 x 6.4 in)</option>
           </select>
         </div>
         <div>
@@ -152,6 +154,10 @@
             <option value="2.4">2.4</option>
             <option value="2">2.0</option>
           </select>
+        </div>
+        <div>
+          <label>Length (in)</label>
+          <input id="labelLengthIn" type="text" value="5.0" />
         </div>
         <div>
           <label>DPI</label>
@@ -165,6 +171,12 @@
             <option value="landscape" selected>Horizontal</option>
             <option value="portrait">Vertical</option>
           </select>
+        </div>
+        <div class="row">
+          <label>
+            <input id="autoLength" type="checkbox" checked />
+            Auto Length
+          </label>
         </div>
       </div>
       <div class="small mt8">
@@ -207,8 +219,10 @@
 
   const labelProfile = document.getElementById('labelProfile');
   const labelWidthIn = document.getElementById('labelWidthIn');
+  const labelLengthIn = document.getElementById('labelLengthIn');
   const dpiSel = document.getElementById('dpi');
   const orientation = document.getElementById('orientation');
+  const autoLength = document.getElementById('autoLength');
 
   const debugLine = document.createElement('div');
   debugLine.className = 'small mt8';
@@ -226,10 +240,8 @@
     cont_24: {
       widthIn: 2.4,
       isDieCut: false,
+      minLengthIn: 3.9,
       mediaNameCandidates: [
-        '2.4" Continuous Length Tape',
-        '62mm Continuous Length Tape',
-        '62 mm Continuous Length Tape',
         '2.4" Continuous Length Tape'
       ]
     },
@@ -238,25 +250,23 @@
       widthIn: 4.0,
       isDieCut: false,
       mediaNameCandidates: [
-        '102mm Continuous Length Tape',
-        '103mm Continuous Length Tape',
         '4" Continuous Length Tape'
       ]
     },
     die_4x6: {
-      widthIn: 4.0,
-      heightIn: 6.0,
+      widthIn: 4.07,
+      heightIn: 6.4,
       isDieCut: true,
-      mediaName: '103mm (Shipping label) 4.08" x 6.02"'
+      mediaName: '4.07" x 6.40" (Shipping label)'
     }
   };
 
   const KNOWN_MEDIA = [
-    '2.44" x 3.93"',
+    '2.44" x 3.90"',
     '4.00" x 1.99"',
     '4.00" x 6.02"',
-    '4.08" x 6.47"',
-    '4.08" x 6.47" (Shipping label)',
+    '4.07" x 6.40"',
+    '4.07" x 6.40" (Shipping label)',
     '0.47" Dia',
     '0.94" Dia',
     '2.30" Dia',
@@ -265,33 +275,66 @@
 
   function getLabelSizeIn() {
     const profile = LABEL_PROFILES[labelProfile.value] || {};
-    const widthIn = profile.widthIn || (profile.widthMm ? (profile.widthMm / 25.4) : parseFloat(labelWidthIn.value));
-    const aspect = 1.33;
+    const widthIn = profile.widthIn || parseFloat(labelWidthIn.value);
     const isLandscape = orientation.value === 'landscape';
-    const heightIn = profile.heightIn || (isLandscape ? (widthIn / aspect) : (widthIn * aspect));
-    const widthMm = Math.round(widthIn * 25.4);
-    const heightMm = profile.heightIn ? Math.round(profile.heightIn * 25.4) : Math.round(heightIn * 25.4);
-    return { profile, widthIn, heightIn, widthMm, heightMm, isLandscape };
+    const aspect = 1.33;
+    const autoLen = autoLength.checked || profile.isDieCut;
+    let heightIn = profile.heightIn || (isLandscape ? (widthIn / aspect) : (widthIn * aspect));
+    if (!profile.isDieCut && profile.minLengthIn) {
+      heightIn = Math.max(heightIn, profile.minLengthIn);
+    }
+    if (!profile.isDieCut && autoLen) {
+      heightIn = snapContinuousLength(widthIn, heightIn);
+    }
+    if (!profile.isDieCut && !autoLen) {
+      const manualLen = parseFloat(labelLengthIn.value);
+      if (!Number.isNaN(manualLen) && manualLen > 0) {
+        heightIn = manualLen;
+      }
+    }
+    return { profile, widthIn, heightIn, isLandscape };
   }
 
   function updatePreviewBuffers() {
     const { widthIn, heightIn } = getLabelSizeIn();
-    const targetW = 480;
-    const ratio = heightIn / widthIn;
-    const targetH = Math.max(1, Math.round(targetW * ratio));
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = (preview.parentElement && preview.parentElement.clientWidth) ? preview.parentElement.clientWidth : 480;
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    const ratio = (vw > 0 && vh > 0) ? (vh / vw) : (640 / 480);
+    const cssH = Math.max(1, Math.round(cssW * ratio));
+    const targetW = Math.max(1, Math.round(cssW * dpr));
+    const targetH = Math.max(1, Math.round(cssH * dpr));
+    preview.style.width = cssW + 'px';
+    preview.style.height = cssH + 'px';
     preview.width = targetW;
     preview.height = targetH;
     work.width = targetW;
     work.height = targetH;
+    if (autoLength.checked) {
+      labelLengthIn.value = heightIn.toFixed(2);
+    }
+    mediaNameInput.value = `${widthIn.toFixed(2)}" x ${heightIn.toFixed(2)}"`;
+  }
+
+  function getPreviewFitMode() {
+    return { fit: 'contain', rotate: false };
   }
 
   function applyProfileToControls() {
     const profile = LABEL_PROFILES[labelProfile.value];
     if (!profile) return;
-    if (profile.widthMm) {
-      labelWidthIn.value = String((profile.widthMm / 25.4).toFixed(1));
-    } else if (profile.widthIn) {
+    if (profile.widthIn) {
       labelWidthIn.value = String(profile.widthIn);
+    }
+    labelWidthIn.disabled = true;
+    if (profile.isDieCut) {
+      autoLength.checked = true;
+      autoLength.disabled = true;
+      labelLengthIn.disabled = true;
+    } else {
+      autoLength.disabled = false;
+      labelLengthIn.disabled = autoLength.checked;
     }
     if (profile.mediaName) {
       mediaNameInput.value = profile.mediaName;
@@ -333,6 +376,12 @@
 
     const savedDpi = loadSetting('hp_dpi', dpiSel.value);
     if (savedDpi) dpiSel.value = savedDpi;
+
+    const savedLength = loadSetting('hp_length', labelLengthIn.value);
+    if (savedLength) labelLengthIn.value = savedLength;
+
+    const savedAutoLen = loadSetting('hp_autoLen', 'true');
+    autoLength.checked = savedAutoLen === 'true';
 
     const savedEffect = loadSetting('hp_effect', effect.value);
     if (savedEffect) effect.value = savedEffect;
@@ -385,6 +434,7 @@
   let lastCapturedDataURL = null;
   let lastCapturedProcessed = false;
   let cachedMediaList = [];
+  let previewFrozen = false;
 
   // --------- Camera ---------
   async function startCamera() {
@@ -407,6 +457,8 @@
       btnCapture.disabled = false;
       hint.textContent = "Live preview running.";
 
+      previewFrozen = false;
+
       startPreviewLoop();
     } catch (e) {
       console.error(e);
@@ -418,6 +470,7 @@
   function stopCamera() {
     if (rafId) cancelAnimationFrame(rafId);
     rafId = null;
+    previewFrozen = false;
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
       stream = null;
@@ -434,6 +487,10 @@
     updatePreviewBuffers();
 
     function tick() {
+      if (previewFrozen) {
+        rafId = null;
+        return;
+      }
       if (!stream || video.readyState < 2) {
         rafId = requestAnimationFrame(tick);
         return;
@@ -442,7 +499,7 @@
       // Draw frame into work canvas
       wctx.fillStyle = "#fff";
       wctx.fillRect(0, 0, work.width, work.height);
-      drawFit(wctx, video, work.width, work.height, getFitMode());
+      drawFit(wctx, video, work.width, work.height, getPreviewFitMode());
 
       const img = wctx.getImageData(0, 0, work.width, work.height);
       applyEffectsInPlace(img.data, work.width, work.height);
@@ -595,6 +652,15 @@
     applyEffectsInPlace(img.data, vw, vh);
     prctx.putImageData(img, 0, 0);
 
+    // Freeze preview on captured image
+    previewFrozen = true;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    updatePreviewBuffers();
+    pctx.fillStyle = "#fff";
+    pctx.fillRect(0, 0, preview.width, preview.height);
+    drawFit(pctx, printCanvas, preview.width, preview.height, getPreviewFitMode());
+
     // Save as data URL for printing pipeline
     lastCapturedDataURL = printCanvas.toDataURL('image/png');
     lastCapturedProcessed = true;
@@ -697,6 +763,7 @@
       }
       mediaSelect.disabled = false;
       hint.textContent = "Media list loaded. Pick the exact roll size from the driver.";
+      syncMediaSelection();
     } catch (e) {
       console.error(e);
       hint.textContent = "Failed to load media sizes. Type the exact media name below.";
@@ -709,44 +776,58 @@
 
   function parseMediaSize(label) {
     const text = normalizeMediaLabel(label);
-    const diaMatch = text.match(/(\d+(?:\.\d+)?)\s*(mm|\")\s*dia/);
+    const diaMatch = text.match(/(\d+(?:\.\d+)?)\s*\"\s*dia/);
     if (diaMatch) {
       const val = parseFloat(diaMatch[1]);
-      const mm = diaMatch[2] === 'mm' ? val : (val * 25.4);
-      return { widthMm: mm, heightMm: mm };
-    }
-
-    const mmPair = text.match(/(\d+(?:\.\d+)?)\s*mm\s*x\s*(\d+(?:\.\d+)?)\s*mm/);
-    if (mmPair) {
-      return { widthMm: parseFloat(mmPair[1]), heightMm: parseFloat(mmPair[2]) };
+      return { widthIn: val, heightIn: val };
     }
 
     const inPair = text.match(/(\d+(?:\.\d+)?)\s*\"\s*x\s*(\d+(?:\.\d+)?)\s*\"/);
     if (inPair) {
-      return { widthMm: parseFloat(inPair[1]) * 25.4, heightMm: parseFloat(inPair[2]) * 25.4 };
+      return { widthIn: parseFloat(inPair[1]), heightIn: parseFloat(inPair[2]) };
     }
 
     return null;
   }
 
+  function isDiaLabel(label) {
+    return normalizeMediaLabel(label).includes('dia');
+  }
+
+  function snapContinuousLength(widthIn, targetHeightIn) {
+    if (!cachedMediaList || cachedMediaList.length === 0) return targetHeightIn;
+    const widthTolerance = 0.06;
+    let best = targetHeightIn;
+    let bestDiff = Number.POSITIVE_INFINITY;
+    for (const name of cachedMediaList) {
+      if (isDiaLabel(name)) continue;
+      const size = parseMediaSize(name);
+      if (!size) continue;
+      if (Math.abs(size.widthIn - widthIn) > widthTolerance) continue;
+      const diff = Math.abs(size.heightIn - targetHeightIn);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = size.heightIn;
+      }
+    }
+    return best;
+  }
+
   function buildSizeFromMediaName(mediaName, fallbackWidthIn, fallbackHeightIn) {
     const size = mediaName ? parseMediaSize(mediaName) : null;
-    if (size) {
-      return {
-        width: +(size.widthMm / 25.4).toFixed(2),
-        height: +(size.heightMm / 25.4).toFixed(2),
-        units: 'in'
-      };
-    }
-    return {
-      width: +fallbackWidthIn.toFixed(2),
-      height: +fallbackHeightIn.toFixed(2),
+    const widthIn = size ? +size.widthIn.toFixed(2) : +fallbackWidthIn.toFixed(2);
+    const heightIn = size ? +size.heightIn.toFixed(2) : +fallbackHeightIn.toFixed(2);
+    const cfg = {
+      width: widthIn,
+      height: heightIn,
       units: 'in'
     };
+    if (mediaName) cfg.name = mediaName;
+    return cfg;
   }
 
   function pickClosestMedia() {
-    const { profile, widthMm, heightMm } = getLabelSizeIn();
+    const { profile, widthIn, heightIn } = getLabelSizeIn();
     const list = (cachedMediaList && cachedMediaList.length > 0) ? cachedMediaList : KNOWN_MEDIA;
     let best = '';
     let bestScore = Number.POSITIVE_INFINITY;
@@ -754,8 +835,8 @@
     for (const name of list) {
       const size = parseMediaSize(name);
       if (!size) continue;
-      const wDiff = Math.abs(size.widthMm - widthMm);
-      const hDiff = Math.abs(size.heightMm - heightMm);
+      const wDiff = Math.abs(size.widthIn - widthIn);
+      const hDiff = Math.abs(size.heightIn - heightIn);
       const score = profile.isDieCut ? (wDiff * 2 + hDiff) : wDiff;
       if (score < bestScore) {
         bestScore = score;
@@ -786,36 +867,32 @@
       }
     }
 
-    const widthMm = Math.round(widthIn * 25.4);
-    const heightMm = Math.round(heightIn * 25.4);
     const name = list.find(s => {
       const n = normalizeMediaLabel(s);
-      const mmMatch = n.match(/(\d{2,3})\s*mm/);
-      if (mmMatch && Math.abs(parseInt(mmMatch[1], 10) - widthMm) <= 2) return true;
-      if (n.includes(widthIn.toFixed(1)) || n.includes(String(widthIn))) return true;
+      if (profile && profile.isDieCut === false && n.includes('dia')) return false;
+      if (n.includes(widthIn.toFixed(2)) || n.includes(widthIn.toFixed(1)) || n.includes(String(widthIn))) return true;
       if (profile && profile.isDieCut) {
-        if (n.includes(heightIn.toFixed(1)) || n.includes(String(heightIn))) return true;
-        if (n.includes(String(heightMm))) return true;
+        if (n.includes(heightIn.toFixed(2)) || n.includes(heightIn.toFixed(1)) || n.includes(String(heightIn))) return true;
       }
       return false;
     });
     return name || '';
   }
 
-  function isMediaNameCompatibleWithWidth(mediaName, widthMm) {
-    if (!mediaName) return true;
-    const n = normalizeMediaLabel(mediaName);
-    const mmMatch = n.match(/(\d{2,3})\s*mm/);
-    if (mmMatch) {
-      return Math.abs(parseInt(mmMatch[1], 10) - widthMm) <= 2;
-    }
-    return true;
+  function syncMediaSelection() {
+    if (!cachedMediaList || cachedMediaList.length === 0) return;
+    const { profile, widthIn, heightIn } = getLabelSizeIn();
+    const match = pickMediaFromList(cachedMediaList, profile, widthIn, heightIn);
+    if (!match) return;
+    if (mediaSelect) mediaSelect.value = match;
+    mediaNameInput.value = match;
+    saveSetting('hp_mediaName', match);
   }
 
   function renderForLabelFromDataURL(dataURL, applyFx = true) {
     // Render captured image into a print bitmap sized for the label width at DPI.
     // Height uses a photo-ish aspect ratio and swaps for orientation.
-    const { profile, widthIn, heightIn, widthMm, heightMm, isLandscape } = getLabelSizeIn();
+    const { profile, widthIn, heightIn, isLandscape } = getLabelSizeIn();
     const dpi = parseInt(dpiSel.value, 10);
     const outW = Math.round(widthIn * dpi);
     const outH = Math.round(heightIn * dpi);
@@ -855,6 +932,13 @@
       hint.textContent = "QZ not connected.";
       return;
     }
+    // Clear freeze once the user initiates printing.
+    if (previewFrozen) {
+      previewFrozen = false;
+      if (stream && rafId === null) {
+        startPreviewLoop();
+      }
+    }
     const printerName = printerSelect.value;
     if (!printerName) {
       hint.textContent = "Select a printer first.";
@@ -879,18 +963,12 @@
     }
 
     // QZ config
-    const { profile, widthIn, heightIn, widthMm, heightMm, isLandscape } = getLabelSizeIn();
+    const { profile, widthIn, heightIn, isLandscape } = getLabelSizeIn();
     const dpi = parseInt(dpiSel.value, 10);
 
-    let mediaName = mediaSelect.value || mediaNameInput.value.trim();
-    if (profile && profile.isDieCut === false) {
-      mediaName = pickMediaFromList(cachedMediaList, profile, widthIn, heightIn);
-      if (!mediaName) {
-        hint.textContent = 'Load Media and select the exact 2.4"/4.0" Continuous Length Tape.';
-        return;
-      }
-    } else if (!mediaName) {
-      mediaName = pickMediaFromList(cachedMediaList, profile, widthIn, heightIn);
+    let mediaName = mediaNameInput.value.trim();
+    if (!mediaName) {
+      mediaName = `${widthIn.toFixed(2)}" x ${heightIn.toFixed(2)}"`;
     }
 
     const sizeCfg = buildSizeFromMediaName(mediaName, widthIn, heightIn);
@@ -915,7 +993,7 @@
             media: cfgOptions.media || undefined
           }
         });
-        debugLine2.textContent = `setPrinter ok: size=${sizeCfg.width}x${sizeCfg.height}${sizeCfg.units} media=${cfgOptions.media || '(none)'}`;
+        debugLine2.textContent = `setPrinter ok: size=${sizeCfg.width}x${sizeCfg.height}${sizeCfg.units} media=${cfgOptions.media || '(none)'} name=${sizeCfg.name || '(none)'}`;
         if (qz.printers.getPrinter) {
           const details = await qz.printers.getPrinter(printerName);
           const currentSize = details && details.options ? details.options.size : undefined;
@@ -931,7 +1009,7 @@
 
     const cfg = qz.configs.create(printerName, cfgOptions);
 
-    debugLine.textContent = `send media="${mediaName || '(none)'}" size=${widthMm}x${heightMm}mm profile=${labelProfile.value}`;
+    debugLine.textContent = `send media="${mediaName || '(none)'}" size=${widthIn.toFixed(2)}x${heightIn.toFixed(2)}in profile=${labelProfile.value}`;
 
     // Send PNG to QZ as base64 pixel data
     hint.textContent = "Printing...";
@@ -961,6 +1039,19 @@
   btnUseClosest.addEventListener('click', pickClosestMedia);
   labelProfile.addEventListener('change', applyProfileToControls);
   orientation.addEventListener('change', updatePreviewBuffers);
+  labelProfile.addEventListener('change', syncMediaSelection);
+  orientation.addEventListener('change', syncMediaSelection);
+  autoLength.addEventListener('change', () => {
+    labelLengthIn.disabled = autoLength.checked;
+    saveSetting('hp_autoLen', autoLength.checked);
+    updatePreviewBuffers();
+    syncMediaSelection();
+  });
+  labelLengthIn.addEventListener('input', () => {
+    saveSetting('hp_length', labelLengthIn.value);
+    updatePreviewBuffers();
+    syncMediaSelection();
+  });
   printerSelect.addEventListener('change', () => {
     btnPrint.disabled = !(lastCapturedDataURL && printerSelect.value && qz.websocket.isActive());
     mediaSelect.innerHTML = '<option value="">(driver media)</option>';
@@ -996,6 +1087,7 @@
     if (qz.websocket.isActive()) {
       await loadPrinters();
     }
+    startCamera();
   });
 </script>
 </body>
