@@ -11,8 +11,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 BASE_DIR = Path(__file__).resolve().parent
-CERT_PATH = Path(os.getenv("QZ_CERT_PATH", BASE_DIR / "certs" / "qz_cert.pem"))
-KEY_PATH = Path(os.getenv("QZ_KEY_PATH", BASE_DIR / "certs" / "qz_private_key.pem"))
+DEFAULT_QZ_DIR = Path(os.getenv("USERPROFILE", str(Path.home()))) / "Desktop" / "QZ Tray Demo Cert"
+CERT_PATH = Path(os.getenv("QZ_CERT_PATH", str(DEFAULT_QZ_DIR / "digital-certificate.txt")))
+KEY_PATH = Path(os.getenv("QZ_KEY_PATH", str(DEFAULT_QZ_DIR / "private-key.pem")))
 SIGN_ALG = os.getenv("QZ_SIGN_ALG", "SHA512").upper()
 
 app = FastAPI()

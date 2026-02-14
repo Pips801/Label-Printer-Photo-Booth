@@ -192,6 +192,12 @@
       Show Status Banner
     </label>
   </div>
+  <div class="slider">
+    <label>
+      <input id="instantPrint" type="checkbox" />
+      Instant print (skip preview/retake)
+    </label>
+  </div>
   <div class="row">
     <button id="btnCloseSettings">Close</button>
   </div>
@@ -236,6 +242,7 @@
   const btnResetCal = document.getElementById('btnResetCal');
   const settingsPreview = document.getElementById('settingsPreview');
   const spctx = settingsPreview.getContext('2d', { willReadFrequently: true });
+  const instantPrint = document.getElementById('instantPrint');
 
   let stream = null;
   let rafId = null;
@@ -496,11 +503,15 @@
 
     lastCapturedDataURL = full.toDataURL('image/png');
     lastCapturedCanvas = full;
-    btnRetake.disabled = false;
-    btnPrint.disabled = false;
+    const autoPrint = instantPrint.checked;
+    btnRetake.disabled = autoPrint ? true : false;
+    btnPrint.disabled = autoPrint ? true : false;
     btnCapture.disabled = false;
-    hint.textContent = 'Captured. Ready to print.';
+    hint.textContent = autoPrint ? 'Captured. Printing...' : 'Captured. Ready to print.';
     renderSettingsPreview();
+    if (autoPrint) {
+      await print();
+    }
   }
 
   function retake() {
@@ -509,6 +520,13 @@
     btnPrint.disabled = true;
     hint.textContent = 'Live preview running.';
     drawPreview();
+  }
+
+  function updateInstantPrintUI() {
+    const enabled = instantPrint.checked;
+    btnRetake.style.display = enabled ? 'none' : '';
+    btnPrint.style.display = enabled ? 'none' : '';
+    btnCapture.textContent = enabled ? 'Capture & Print' : 'Capture';
   }
 
   async function renderForPrint() {
@@ -624,6 +642,10 @@
     saveSetting('pb_invert', invertPrint.checked ? 'true' : 'false');
     renderSettingsPreview();
   });
+  instantPrint.addEventListener('change', () => {
+    saveSetting('pb_instantPrint', instantPrint.checked ? 'true' : 'false');
+    updateInstantPrintUI();
+  });
   btnResetCal.addEventListener('click', () => {
     brightness.value = 0;
     contrast.value = 0;
@@ -666,6 +688,15 @@
     hint.style.display = showStatus.checked ? 'block' : 'none';
     saveSetting('pb_showStatus', showStatus.checked ? 'true' : 'false');
   });
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space') return;
+    const target = e.target;
+    const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return;
+    if (btnCapture.disabled) return;
+    e.preventDefault();
+    btnCapture.click();
+  });
 
   window.addEventListener('load', () => {
     setupQZSecurity().catch((e) => {
@@ -678,8 +709,10 @@
     contrast.value = loadSetting('pb_contrast', contrast.value);
     gamma.value = loadSetting('pb_gamma', gamma.value);
     invertPrint.checked = loadSetting('pb_invert', 'false') === 'true';
+    instantPrint.checked = loadSetting('pb_instantPrint', 'false') === 'true';
     showStatus.checked = loadSetting('pb_showStatus', 'true') === 'true';
     hint.style.display = showStatus.checked ? 'block' : 'none';
+    updateInstantPrintUI();
     startCamera();
   });
 
