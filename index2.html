@@ -10,7 +10,9 @@
     main { min-height: 100vh; height: 100vh; display:flex; align-items:center; justify-content:center; padding:0; }
     .card { width: 100%; height: 100vh; background:#151515; border:0; border-radius:0; padding:0; }
     .preview-wrap { width: 100%; height: 100%; display:flex; align-items:center; justify-content:center; }
-    canvas { width: 100%; height: 100%; border-radius:12px; background:#000; object-fit: contain; }
+    .live-video, .preview-canvas { max-width: 100%; max-height: 100%; border-radius:12px; background:#000; object-fit: contain; }
+    .live-video { filter: grayscale(1); }
+    .preview-canvas { display: none; }
     .row { display:flex; gap:12px; align-items:center; justify-content:center; flex-wrap:wrap; }
     .controls { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
     button, select { font: inherit; }
@@ -22,6 +24,8 @@
     select { padding:10px 12px; border-radius:10px; border:1px solid #333; background:#222; color:#eee; }
     input[type="range"] { width: 100%; }
     .hint { font-size:12px; color:#aaa; text-align:center; }
+    .hint.error { color:#ff7a7a; }
+    .hint.warn { color:#f6c343; }
     .countdown { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:96px; font-weight:800; color:#fff; background:rgba(0,0,0,0.5); border-radius:12px; }
     .flash { position:absolute; inset:0; background:#fff; opacity:0; border-radius:12px; transition:opacity 180ms ease; }
     .flash.on { opacity:1; }
@@ -61,6 +65,15 @@
       border-radius:12px;
       border:1px solid rgba(255,255,255,0.12);
       backdrop-filter: blur(6px);
+    }
+    .printer-status {
+      top:48px;
+      color:#f6c343;
+      border-color: rgba(246,195,67,0.35);
+    }
+    .printer-status.error {
+      color:#ff7a7a;
+      border-color: rgba(255,122,122,0.35);
     }
     .settings-btn {
       position:fixed;
@@ -130,11 +143,12 @@
   <div class="card">
     <div class="preview-wrap">
       <div class="stack" id="previewStack">
-        <video id="video" playsinline autoplay muted style="display:none;"></video>
-        <canvas id="preview" width="640" height="480"></canvas>
+        <video id="video" class="live-video" playsinline autoplay muted></video>
+        <canvas id="preview" class="preview-canvas" width="640" height="480"></canvas>
         <div id="countdown" class="countdown" style="display:none;">3</div>
         <div id="flash" class="flash"></div>
         <div class="overlay-hint" id="hint">Start camera automatically. Capture to freeze, Retake to resume.</div>
+        <div class="overlay-hint printer-status" id="printerStatus" style="display:none;"></div>
         <div class="overlay-controls">
           <button id="btnCapture" class="primary">Capture</button>
           <button id="btnRetake" class="danger" disabled>Retake</button>
@@ -160,6 +174,9 @@
       <select id="printerSelect" style="flex:1;"></select>
       <button id="btnLoadPrinters">Load</button>
     </div>
+    <div class="row">
+      <button id="btnClearQueue" class="danger">Clear Queue</button>
+    </div>
   </div>
   <div class="slider">
     <label>Brightness</label>
@@ -184,6 +201,12 @@
     <label>
       <input id="showStatus" type="checkbox" checked />
       Show Status Banner
+    </label>
+  </div>
+  <div class="slider">
+    <label>
+      <input id="showPrinterBanner" type="checkbox" checked />
+      Show Printer Banner
     </label>
   </div>
   <div class="slider">
@@ -219,6 +242,7 @@
   const btnPrint = document.getElementById('btnPrint');
   const rollSelect = document.getElementById('rollSelect');
   const hint = document.getElementById('hint');
+  const printerStatus = document.getElementById('printerStatus');
   const settingsBtn = document.getElementById('settingsBtn');
   const settingsPanel = document.getElementById('settingsPanel');
   const btnCloseSettings = document.getElementById('btnCloseSettings');
@@ -227,8 +251,10 @@
   const authCancel = document.getElementById('authCancel');
   const authOk = document.getElementById('authOk');
   const showStatus = document.getElementById('showStatus');
+  const showPrinterBanner = document.getElementById('showPrinterBanner');
   const printerSelect = document.getElementById('printerSelect');
   const btnLoadPrinters = document.getElementById('btnLoadPrinters');
+  const btnClearQueue = document.getElementById('btnClearQueue');
   const brightness = document.getElementById('brightness');
   const contrast = document.getElementById('contrast');
   const gamma = document.getElementById('gamma');
@@ -243,11 +269,14 @@
   let lastCapturedDataURL = null;
   let lastCapturedCanvas = null;
   let qzSecurityReady = false;
+  let statusPollId = null;
+  let statusListeningPrinter = null;
+  const printerStatusCodeMap = {
+    2: 'Cover open/Cannot feed paper'
+  };
 
   const SETTINGS_PASSWORD = 'DC801DC801';
 
-  const work = document.createElement('canvas');
-  const wctx = work.getContext('2d', { willReadFrequently: true });
   const settingsWork = document.createElement('canvas');
   const swctx = settingsWork.getContext('2d', { willReadFrequently: true });
   const gammaCache = new Map();
@@ -311,6 +340,7 @@
     if (!printerSelect.value && printers.length > 0) {
       printerSelect.value = printers[0];
     }
+    ensurePrinterStatusListening();
   }
 
 
@@ -330,10 +360,10 @@
     const cssH = Math.max(1, Math.round(cssW * ratio));
     preview.style.width = cssW + 'px';
     preview.style.height = cssH + 'px';
+    video.style.width = cssW + 'px';
+    video.style.height = cssH + 'px';
     preview.width = Math.round(cssW * dpr);
     preview.height = Math.round(cssH * dpr);
-    work.width = preview.width;
-    work.height = preview.height;
   }
 
   function getGammaLUT(g) {
@@ -375,11 +405,6 @@
       rafId = requestAnimationFrame(drawPreview);
       return;
     }
-
-    wctx.drawImage(video, 0, 0, work.width, work.height);
-    const img = wctx.getImageData(0, 0, work.width, work.height);
-    applyGrayscale(img, 0, 0, 1);
-    pctx.putImageData(img, 0, 0);
     renderSettingsPreview();
     rafId = requestAnimationFrame(drawPreview);
   }
@@ -445,6 +470,7 @@
       }
       resizePreview();
       frozen = false;
+      setPreviewMode(false);
       if (rafId) cancelAnimationFrame(rafId);
       drawPreview();
       hint.textContent = 'Live preview running.';
@@ -488,6 +514,7 @@
 
     // Freeze preview
     frozen = true;
+    setPreviewMode(true);
     if (rafId) cancelAnimationFrame(rafId);
     resizePreview();
     pctx.drawImage(full, 0, 0, preview.width, preview.height);
@@ -507,10 +534,16 @@
 
   function retake() {
     frozen = false;
+    setPreviewMode(false);
     btnRetake.disabled = true;
     btnPrint.disabled = true;
     hint.textContent = 'Live preview running.';
     drawPreview();
+  }
+
+  function setPreviewMode(isFrozen) {
+    preview.style.display = isFrozen ? 'block' : 'none';
+    video.style.display = isFrozen ? 'none' : 'block';
   }
 
   function updateInstantPrintUI() {
@@ -518,6 +551,79 @@
     btnRetake.style.display = enabled ? 'none' : '';
     btnPrint.style.display = enabled ? 'none' : '';
     btnCapture.textContent = enabled ? 'Capture & Print' : 'Capture';
+  }
+
+  function setStatusBannerAlert(level, message) {
+    if (!showStatus.checked || !level || !message) {
+      hint.classList.remove('error', 'warn');
+      return;
+    }
+    hint.textContent = `Printer ${level}: ${message}`;
+    hint.classList.toggle('error', level === 'ERROR');
+    hint.classList.toggle('warn', level === 'WARN');
+  }
+
+  function setPrinterStatusAlert(level, message) {
+    if (!showStatus.checked || !showPrinterBanner.checked || !level || !message) {
+      printerStatus.style.display = 'none';
+      return;
+    }
+    printerStatus.textContent = `Printer ${level}: ${message}`;
+    printerStatus.classList.toggle('error', level === 'ERROR');
+    printerStatus.style.display = 'block';
+  }
+
+  function handlePrinterStream(streamEvent) {
+    if (!showStatus.checked) return;
+    const selected = printerSelect.value;
+    if (streamEvent.printerName && selected && streamEvent.printerName !== selected) return;
+    if (streamEvent.type === 'ERROR') {
+      setStatusBannerAlert('ERROR', streamEvent.exception || 'Status error');
+      if (showPrinterBanner.checked) {
+        setPrinterStatusAlert('ERROR', JSON.stringify(streamEvent));
+      }
+      return;
+    }
+    if (streamEvent.type !== 'ACTION') return;
+    const levelRaw = String(streamEvent.severity || '').toUpperCase();
+    const level = levelRaw === 'WARNING' ? 'WARN' : (levelRaw === 'FATAL' ? 'ERROR' : levelRaw);
+    if (level === 'WARN' || level === 'ERROR') {
+      const mapped = printerStatusCodeMap[streamEvent.statusCode];
+      const statusMessage = mapped || (streamEvent.statusText ? `Code ${streamEvent.statusCode}: ${streamEvent.statusText}` : `Code ${streamEvent.statusCode || 'unknown'}`);
+      setStatusBannerAlert(level, statusMessage);
+      if (showPrinterBanner.checked) {
+        setPrinterStatusAlert(level, JSON.stringify(streamEvent));
+      }
+    } else {
+      setPrinterStatusAlert(null, null);
+    }
+  }
+
+  async function ensurePrinterStatusListening() {
+    if (!showStatus.checked) return;
+    const printerName = printerSelect.value;
+    if (!printerName) return;
+    try { await connectQZ(); } catch (e) { return; }
+    if (statusListeningPrinter && statusListeningPrinter !== printerName) {
+      try { await qz.printers.stopListening(); } catch (_) {}
+      statusListeningPrinter = null;
+    }
+    if (statusListeningPrinter !== printerName) {
+      try {
+        await qz.printers.startListening(printerName);
+        statusListeningPrinter = printerName;
+      } catch (e) {
+        console.error(e);
+        setPrinterStatusAlert('ERROR', 'Status listen failed');
+        return;
+      }
+    }
+    try {
+      await qz.printers.getStatus();
+    } catch (e) {
+      console.error(e);
+      setPrinterStatusAlert('ERROR', 'Status check failed');
+    }
   }
 
   async function renderForPrint() {
@@ -608,6 +714,7 @@
       }]);
       hint.textContent = 'Print sent.';
       frozen = false;
+      setPreviewMode(false);
       btnRetake.disabled = true;
       btnPrint.disabled = true;
       drawPreview();
@@ -617,11 +724,34 @@
     }
   }
 
+  async function clearQueue() {
+    try { await connectQZ(); } catch (e) { console.error(e); }
+    if (!printerSelect.options.length) {
+      await loadPrinters();
+    }
+    const printerName = printerSelect.value || printerSelect.options[0]?.value;
+    if (!printerName) {
+      hint.textContent = 'No printer found.';
+      return;
+    }
+    try {
+      await qz.printers.clearQueue(printerName);
+      hint.textContent = 'Print queue cleared.';
+    } catch (e) {
+      console.error(e);
+      hint.textContent = 'Failed to clear queue. Check QZ/printer.';
+    }
+  }
+
   btnCapture.addEventListener('click', capture);
   btnRetake.addEventListener('click', retake);
   btnPrint.addEventListener('click', print);
   btnLoadPrinters.addEventListener('click', loadPrinters);
-  printerSelect.addEventListener('change', () => saveSetting('pb_printer', printerSelect.value));
+  btnClearQueue.addEventListener('click', clearQueue);
+  printerSelect.addEventListener('change', () => {
+    saveSetting('pb_printer', printerSelect.value);
+    ensurePrinterStatusListening();
+  });
   rollSelect.addEventListener('change', () => saveSetting('pb_roll', rollSelect.value));
   brightness.addEventListener('input', () => saveSetting('pb_brightness', brightness.value));
   contrast.addEventListener('input', () => saveSetting('pb_contrast', contrast.value));
@@ -672,6 +802,21 @@
   showStatus.addEventListener('change', () => {
     hint.style.display = showStatus.checked ? 'block' : 'none';
     saveSetting('pb_showStatus', showStatus.checked ? 'true' : 'false');
+    if (!showStatus.checked) {
+      printerStatus.style.display = 'none';
+      statusListeningPrinter = null;
+      try { qz.printers.stopListening(); } catch (_) {}
+    } else {
+      ensurePrinterStatusListening();
+    }
+  });
+  showPrinterBanner.addEventListener('change', () => {
+    saveSetting('pb_showPrinterBanner', showPrinterBanner.checked ? 'true' : 'false');
+    if (!showPrinterBanner.checked) {
+      printerStatus.style.display = 'none';
+    } else {
+      ensurePrinterStatusListening();
+    }
   });
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Space') return;
@@ -695,9 +840,25 @@
     gamma.value = loadSetting('pb_gamma', gamma.value);
     instantPrint.checked = loadSetting('pb_instantPrint', 'false') === 'true';
     showStatus.checked = loadSetting('pb_showStatus', 'true') === 'true';
+    showPrinterBanner.checked = loadSetting('pb_showPrinterBanner', 'true') === 'true';
     hint.style.display = showStatus.checked ? 'block' : 'none';
     updateInstantPrintUI();
+    setPreviewMode(false);
     startCamera();
+    qz.printers.setPrinterCallbacks(handlePrinterStream);
+    ensurePrinterStatusListening();
+    if (!statusPollId) {
+      statusPollId = setInterval(() => {
+        if (!showStatus.checked) return;
+        if (!qz.websocket.isActive()) return;
+        if (!printerSelect.value) return;
+        if (statusListeningPrinter !== printerSelect.value) {
+          ensurePrinterStatusListening();
+          return;
+        }
+        qz.printers.getStatus().catch((e) => console.error(e));
+      }, 5000);
+    }
   });
 
   window.addEventListener('resize', () => {
