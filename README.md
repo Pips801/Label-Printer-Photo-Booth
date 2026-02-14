@@ -19,8 +19,8 @@ QZ Tray requires a trusted certificate and a private key.
 4) Accept prompts to generate demo keys
 
 QZ Tray will create two files:
-- digital-certificate.txt
-- private-key.pem
+- `digital-certificate.txt`
+- `private-key.pem`
 
 Keep note of the folder where these files are saved.
 
@@ -29,50 +29,50 @@ Keep note of the folder where these files are saved.
 1) Create a virtual environment
 
 Windows:
-  python -m venv .venv
-  .venv\Scripts\activate
+  `python -m venv .venv`
+  `.venv\Scripts\activate`
 
 macOS/Linux:
-  python3 -m venv .venv
-  source .venv/bin/activate
+  `python3 -m venv .venv`
+  `source .venv/bin/activate`
 
 2) Install dependencies
 
-  pip install -r requirements.txt
+  `pip install -r requirements.txt`
 
 3) Set environment variables to point at the QZ files
 
 Windows (PowerShell):
-  setx QZ_CERT_PATH "C:\path\to\digital-certificate.txt"
-  setx QZ_KEY_PATH "C:\path\to\private-key.pem"
+  `setx QZ_CERT_PATH "C:\path\to\digital-certificate.txt"
+  setx QZ_KEY_PATH "C:\path\to\private-key.pem"`
 
 macOS/Linux (bash/zsh):
-  export QZ_CERT_PATH="/path/to/digital-certificate.txt"
-  export QZ_KEY_PATH="/path/to/private-key.pem"
+  `export QZ_CERT_PATH="/path/to/digital-certificate.txt"
+  export QZ_KEY_PATH="/path/to/private-key.pem"`
 
 Note: On Windows, close and reopen the terminal after setx.
 
 ## Run the App
 
 Windows:
-  python app.py
+  `python app.py`
 
 macOS/Linux:
-  python3 app.py
+  `python3 app.py`
 
 Then open:
-  http://127.0.0.1:8000
+  `http://127.0.0.1:8000`
 
 ## Kiosk Mode (Optional)
 
 Windows (Chrome):
-  "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk http://127.0.0.1:8000 --incognito --start-fullscreen
+  `"C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk http://127.0.0.1:8000 --incognito --start-fullscreen`
 
 macOS (Chrome):
-  /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --kiosk http://127.0.0.1:8000 --incognito
+  `/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --kiosk http://127.0.0.1:8000 --incognito`
 
 Linux (Chrome):
-  google-chrome --kiosk http://127.0.0.1:8000 --incognito
+  `google-chrome --kiosk http://127.0.0.1:8000 --incognito`
 
 ## Troubleshooting
 
