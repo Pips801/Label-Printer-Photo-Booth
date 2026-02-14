@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QL-1110 Photo Booth (QZ Tray)</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background:#111; color:#eee; }
+    header { padding: 12px 16px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #222; }
+    main { display:grid; grid-template-columns: 1fr 420px; gap: 16px; padding: 16px; }
+    .card { background:#181818; border:1px solid #222; border-radius:12px; padding: 12px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    button, select, input[type="range"], input[type="text"] {
+      font: inherit;
+    }
+    button {
+      background:#2b2b2b; color:#eee; border:1px solid #3a3a3a; border-radius:10px;
+      padding:10px 12px; cursor:pointer;
+    }
+    button.primary { background:#3a6; border-color:#3a6; color:#031; font-weight:700; }
+    button.danger { background:#a33; border-color:#a33; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    select, input[type="text"] { background:#2b2b2b; color:#eee; border:1px solid #3a3a3a; border-radius:10px; padding:10px 12px; }
+    label { font-size: 13px; color:#bbb; }
+    input[type="range"] { width: 100%; }
+    video { width: 100%; border-radius: 12px; background:#000; }
+    canvas { width: 100%; border-radius: 12px; background:#000; image-rendering: pixelated; }
+    .small { font-size: 12px; color:#aaa; }
+    .pill { display:inline-block; padding:4px 8px; border:1px solid #333; border-radius:999px; font-size:12px; color:#bbb; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mt8 { margin-top: 8px; }
+    .mt12 { margin-top: 12px; }
+  </style>
+
+  <!-- QZ Tray library (CDN). For offline use, download and serve this file locally. -->
+  <script src="https://cdn.jsdelivr.net/npm/qz-tray/qz-tray.js"></script>
+</head>
+
+<body>
+<header>
+  <div style="font-weight:800;">QL-1110 Photo Booth</div>
+  <span id="qzStatus" class="pill">QZ: disconnected</span>
+  <span id="camStatus" class="pill">CAM: stopped</span>
+</header>
+
+<main>
+  <!-- Left: live camera -->
+  <section class="card">
+    <div class="row">
+      <button id="btnStartCam" class="primary">Start Camera</button>
+      <button id="btnStopCam" class="danger" disabled>Stop</button>
+
+      <label style="margin-left:auto;">
+        Effect
+        <select id="effect">
+          <option value="threshold">Threshold (B/W)</option>
+          <option value="ordered">Ordered Dither (Bayer)</option>
+          <option value="grayscale">Grayscale</option>
+        </select>
+      </label>
+    </div>
+
+    <video id="video" playsinline autoplay muted></video>
+
+    <div class="grid2 mt12">
+      <div>
+        <label>Brightness</label>
+        <input id="brightness" type="range" min="-100" max="100" value="0" />
+      </div>
+      <div>
+        <label>Contrast</label>
+        <input id="contrast" type="range" min="-100" max="100" value="0" />
+      </div>
+      <div>
+        <label>Gamma</label>
+        <input id="gamma" type="range" min="50" max="200" value="100" />
+        <div class="small">Gamma = slider / 100</div>
+      </div>
+      <div>
+        <label>Threshold</label>
+        <input id="thresh" type="range" min="0" max="255" value="128" />
+      </div>
+    </div>
+
+    <div class="row mt12">
+      <button id="btnCapture" class="primary" disabled>Capture</button>
+      <button id="btnPrint" disabled>Print (QZ)</button>
+      <span class="small" id="hint"></span>
+    </div>
+  </section>
+
+  <!-- Right: processed preview + printer -->
+  <aside class="card">
+    <div class="row">
+      <button id="btnConnectQZ" class="primary">Connect QZ</button>
+      <button id="btnDisconnectQZ" class="danger" disabled>Disconnect</button>
+    </div>
+
+    <div class="mt12">
+      <label>Printer</label>
+      <div class="row mt8">
+        <select id="printerSelect" style="flex:1;" disabled>
+          <option value="">(load printers)</option>
+        </select>
+        <button id="btnLoadPrinters" disabled>Load</button>
+      </div>
+      <div class="row mt8">
+        <select id="mediaSelect" style="flex:1;" disabled>
+          <option value="">(driver media)</option>
+        </select>
+        <button id="btnLoadMedia" disabled>Load Media</button>
+      </div>
+      <div class="row mt8">
+        <select id="knownMediaSelect" style="flex:1;">
+          <option value="">(known Brother sizes)</option>
+        </select>
+        <button id="btnUseClosest">Use Closest</button>
+      </div>
+      <div class="row mt8">
+        <input id="mediaNameInput" type="text" style="flex:1;" placeholder="Exact media name (e.g. 4" x 6" / DK-1247)" />
+      </div>
+      <div class="small mt8">
+        Make sure the Brother driver is installed and the printer is visible to the OS.
+      </div>
+    </div>
+
+    <div class="mt12">
+      <label>Processed Preview</label>
+      <canvas id="preview" width="480" height="640"></canvas>
+      <div class="small mt8">
+        Preview renders at lower resolution for speed. Print renders at full width (4" @ 300 dpi = 1200 px).
+      </div>
+    </div>
+
+    <div class="mt12">
+      <label>Label Settings</label>
+      <div class="grid2 mt8">
+        <div>
+          <label>Profile</label>
+          <select id="labelProfile">
+            <option value="cont_24">2.4" Continuous</option>
+            <option value="die_24x39">2.4" Die Cut (2.4 x 3.9 in)</option>
+            <option value="cont_40">4.0" Continuous</option>
+            <option value="die_4x6">4.0" Die Cut (4 x 6 in)</option>
+          </select>
+        </div>
+        <div>
+          <label>Width (in)</label>
+          <select id="labelWidthIn">
+            <option value="4">4.0</option>
+            <option value="2.4">2.4</option>
+            <option value="2">2.0</option>
+          </select>
+        </div>
+        <div>
+          <label>DPI</label>
+          <select id="dpi">
+            <option value="300" selected>300</option>
+          </select>
+        </div>
+        <div>
+          <label>Orientation</label>
+          <select id="orientation">
+            <option value="landscape" selected>Horizontal</option>
+            <option value="portrait">Vertical</option>
+          </select>
+        </div>
+      </div>
+      <div class="small mt8">
+        Profile sets the printer media type/size to match the roll in the QL-1110.
+      </div>
+    </div>
+  </aside>
+</main>
+
+<script>
+  // --------- DOM ---------
+  const qzStatus = document.getElementById('qzStatus');
+  const camStatus = document.getElementById('camStatus');
+  const hint = document.getElementById('hint');
+
+  const video = document.getElementById('video');
+  const preview = document.getElementById('preview');
+  const pctx = preview.getContext('2d', { willReadFrequently: true });
+
+  const btnStartCam = document.getElementById('btnStartCam');
+  const btnStopCam = document.getElementById('btnStopCam');
+  const btnCapture = document.getElementById('btnCapture');
+  const btnPrint = document.getElementById('btnPrint');
+
+  const btnConnectQZ = document.getElementById('btnConnectQZ');
+  const btnDisconnectQZ = document.getElementById('btnDisconnectQZ');
+  const btnLoadPrinters = document.getElementById('btnLoadPrinters');
+  const printerSelect = document.getElementById('printerSelect');
+  const btnLoadMedia = document.getElementById('btnLoadMedia');
+  const mediaSelect = document.getElementById('mediaSelect');
+  const knownMediaSelect = document.getElementById('knownMediaSelect');
+  const btnUseClosest = document.getElementById('btnUseClosest');
+  const mediaNameInput = document.getElementById('mediaNameInput');
+
+  const effect = document.getElementById('effect');
+  const brightness = document.getElementById('brightness');
+  const contrast = document.getElementById('contrast');
+  const gamma = document.getElementById('gamma');
+  const thresh = document.getElementById('thresh');
+
+  const labelProfile = document.getElementById('labelProfile');
+  const labelWidthIn = document.getElementById('labelWidthIn');
+  const dpiSel = document.getElementById('dpi');
+  const orientation = document.getElementById('orientation');
+
+  const debugLine = document.createElement('div');
+  debugLine.className = 'small mt8';
+  debugLine.style.color = '#9bd';
+  debugLine.textContent = '';
+  document.querySelector('aside.card').appendChild(debugLine);
+
+  const debugLine2 = document.createElement('div');
+  debugLine2.className = 'small';
+  debugLine2.style.color = '#9bd';
+  debugLine2.textContent = '';
+  document.querySelector('aside.card').appendChild(debugLine2);
+
+  const LABEL_PROFILES = {
+    cont_24: {
+      widthIn: 2.4,
+      isDieCut: false,
+      mediaNameCandidates: [
+        '2.4" Continuous Length Tape',
+        '62mm Continuous Length Tape',
+        '62 mm Continuous Length Tape',
+        '2.4" Continuous Length Tape'
+      ]
+    },
+    die_24x39: { widthIn: 2.4, heightIn: 3.9, isDieCut: true },
+    cont_40: {
+      widthIn: 4.0,
+      isDieCut: false,
+      mediaNameCandidates: [
+        '102mm Continuous Length Tape',
+        '103mm Continuous Length Tape',
+        '4" Continuous Length Tape'
+      ]
+    },
+    die_4x6: {
+      widthIn: 4.0,
+      heightIn: 6.0,
+      isDieCut: true,
+      mediaName: '103mm (Shipping label) 4.08" x 6.02"'
+    }
+  };
+
+  const KNOWN_MEDIA = [
+    '2.44" x 3.93"',
+    '4.00" x 1.99"',
+    '4.00" x 6.02"',
+    '4.08" x 6.47"',
+    '4.08" x 6.47" (Shipping label)',
+    '0.47" Dia',
+    '0.94" Dia',
+    '2.30" Dia',
+    '0.47" x 6.02"'
+  ];
+
+  function getLabelSizeIn() {
+    const profile = LABEL_PROFILES[labelProfile.value] || {};
+    const widthIn = profile.widthIn || (profile.widthMm ? (profile.widthMm / 25.4) : parseFloat(labelWidthIn.value));
+    const aspect = 1.33;
+    const isLandscape = orientation.value === 'landscape';
+    const heightIn = profile.heightIn || (isLandscape ? (widthIn / aspect) : (widthIn * aspect));
+    const widthMm = Math.round(widthIn * 25.4);
+    const heightMm = profile.heightIn ? Math.round(profile.heightIn * 25.4) : Math.round(heightIn * 25.4);
+    return { profile, widthIn, heightIn, widthMm, heightMm, isLandscape };
+  }
+
+  function updatePreviewBuffers() {
+    const { widthIn, heightIn } = getLabelSizeIn();
+    const targetW = 480;
+    const ratio = heightIn / widthIn;
+    const targetH = Math.max(1, Math.round(targetW * ratio));
+    preview.width = targetW;
+    preview.height = targetH;
+    work.width = targetW;
+    work.height = targetH;
+  }
+
+  function applyProfileToControls() {
+    const profile = LABEL_PROFILES[labelProfile.value];
+    if (!profile) return;
+    if (profile.widthMm) {
+      labelWidthIn.value = String((profile.widthMm / 25.4).toFixed(1));
+    } else if (profile.widthIn) {
+      labelWidthIn.value = String(profile.widthIn);
+    }
+    if (profile.mediaName) {
+      mediaNameInput.value = profile.mediaName;
+    } else if (profile.isDieCut === false) {
+      mediaNameInput.value = (profile.mediaNameCandidates && profile.mediaNameCandidates[0]) ? profile.mediaNameCandidates[0] : '';
+      mediaNameInput.placeholder = '2.4" Continuous Length Tape';
+    } else if (profile.mediaNameCandidates && profile.mediaNameCandidates.length > 0) {
+      mediaNameInput.value = profile.mediaNameCandidates[0];
+      mediaNameInput.placeholder = profile.mediaNameCandidates[0];
+    }
+    if (mediaSelect) {
+      mediaSelect.selectedIndex = 0;
+      mediaSelect.value = '';
+    }
+    updatePreviewBuffers();
+  }
+
+  function saveSetting(key, value) {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch (_) {}
+  }
+
+  function loadSetting(key, fallback = '') {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function restoreSettings() {
+    const savedProfile = loadSetting('hp_profile', labelProfile.value);
+    if (savedProfile) labelProfile.value = savedProfile;
+
+    const savedOrientation = loadSetting('hp_orientation', orientation.value);
+    if (savedOrientation) orientation.value = savedOrientation;
+
+    const savedDpi = loadSetting('hp_dpi', dpiSel.value);
+    if (savedDpi) dpiSel.value = savedDpi;
+
+    const savedEffect = loadSetting('hp_effect', effect.value);
+    if (savedEffect) effect.value = savedEffect;
+
+    const savedBrightness = loadSetting('hp_brightness', brightness.value);
+    const savedContrast = loadSetting('hp_contrast', contrast.value);
+    const savedGamma = loadSetting('hp_gamma', gamma.value);
+    const savedThresh = loadSetting('hp_thresh', thresh.value);
+    brightness.value = savedBrightness;
+    contrast.value = savedContrast;
+    gamma.value = savedGamma;
+    thresh.value = savedThresh;
+
+    applyProfileToControls();
+
+    const savedMediaName = loadSetting('hp_mediaName', '');
+    const profile = LABEL_PROFILES[labelProfile.value] || {};
+    if (profile.isDieCut && savedMediaName) {
+      mediaNameInput.value = savedMediaName;
+    }
+    if (mediaSelect) {
+      mediaSelect.selectedIndex = 0;
+      mediaSelect.value = '';
+    }
+    updatePreviewBuffers();
+  }
+
+  function populateKnownMedia() {
+    knownMediaSelect.innerHTML = '<option value="">(known Brother sizes)</option>';
+    for (const name of KNOWN_MEDIA) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      knownMediaSelect.appendChild(opt);
+    }
+  }
+
+  // Hidden canvases for processing / printing
+  const work = document.createElement('canvas');
+  const wctx = work.getContext('2d', { willReadFrequently: true });
+
+  const printCanvas = document.createElement('canvas');
+  const prctx = printCanvas.getContext('2d', { willReadFrequently: true });
+
+  const rotCanvas = document.createElement('canvas');
+  const rotCtx = rotCanvas.getContext('2d', { willReadFrequently: true });
+
+  let stream = null;
+  let rafId = null;
+  let lastCapturedDataURL = null;
+  let lastCapturedProcessed = false;
+  let cachedMediaList = [];
+
+  // --------- Camera ---------
+  async function startCamera() {
+    stopCamera();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: "user"
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+      await video.play();
+
+      camStatus.textContent = "CAM: running";
+      btnStopCam.disabled = false;
+      btnCapture.disabled = false;
+      hint.textContent = "Live preview running.";
+
+      startPreviewLoop();
+    } catch (e) {
+      console.error(e);
+      camStatus.textContent = "CAM: error";
+      hint.textContent = "Camera permission denied or unavailable.";
+    }
+  }
+
+  function stopCamera() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    video.srcObject = null;
+    camStatus.textContent = "CAM: stopped";
+    btnStopCam.disabled = true;
+    btnCapture.disabled = true;
+  }
+
+  // --------- Preview Loop (low-res) ---------
+  function startPreviewLoop() {
+    // Render into a speed-friendly buffer
+    updatePreviewBuffers();
+
+    function tick() {
+      if (!stream || video.readyState < 2) {
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+
+      // Draw frame into work canvas
+      wctx.fillStyle = "#fff";
+      wctx.fillRect(0, 0, work.width, work.height);
+      drawFit(wctx, video, work.width, work.height, getFitMode());
+
+      const img = wctx.getImageData(0, 0, work.width, work.height);
+      applyEffectsInPlace(img.data, work.width, work.height);
+
+      // Push to preview
+      pctx.putImageData(img, 0, 0);
+
+      rafId = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function getFitMode() {
+    if (orientation.value === 'portrait') {
+      return { fit: 'cover', rotate: true };
+    }
+    return { fit: 'cover', rotate: false };
+  }
+
+  function drawFit(ctx, src, dstW, dstH, fitCfg) {
+    const fitMode = fitCfg.fit || 'cover';
+    const rotate = !!fitCfg.rotate;
+    let srcW = src.videoWidth || src.width;
+    let srcH = src.videoHeight || src.height;
+    if (!srcW || !srcH) return;
+
+    if (rotate) {
+      rotCanvas.width = srcH;
+      rotCanvas.height = srcW;
+      rotCtx.setTransform(1, 0, 0, 1, 0, 0);
+      rotCtx.clearRect(0, 0, rotCanvas.width, rotCanvas.height);
+      rotCtx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+      rotCtx.rotate(-Math.PI / 2);
+      rotCtx.drawImage(src, -srcW / 2, -srcH / 2, srcW, srcH);
+      src = rotCanvas;
+      srcW = rotCanvas.width;
+      srcH = rotCanvas.height;
+    }
+
+    if (fitMode === 'contain') {
+      const scale = Math.min(dstW / srcW, dstH / srcH);
+      const dw = Math.round(srcW * scale);
+      const dh = Math.round(srcH * scale);
+      const dx = Math.round((dstW - dw) / 2);
+      const dy = Math.round((dstH - dh) / 2);
+      ctx.drawImage(src, 0, 0, srcW, srcH, dx, dy, dw, dh);
+      return;
+    }
+
+    // cover (crop to fill)
+    const srcAspect = srcW / srcH;
+    const dstAspect = dstW / dstH;
+    let sx = 0, sy = 0, sw = srcW, sh = srcH;
+    if (srcAspect > dstAspect) {
+      sh = srcH;
+      sw = Math.round(srcH * dstAspect);
+      sx = Math.round((srcW - sw) / 2);
+    } else {
+      sw = srcW;
+      sh = Math.round(srcW / dstAspect);
+      sy = Math.round((srcH - sh) / 2);
+    }
+    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, dstW, dstH);
+  }
+
+  // --------- Effects ---------
+  function applyEffectsInPlace(data, w, h) {
+    const b = parseInt(brightness.value, 10);
+    const c = parseInt(contrast.value, 10);
+    const g = parseInt(gamma.value, 10) / 100;
+    const t = parseInt(thresh.value, 10);
+    const mode = effect.value;
+
+    // Contrast factor: map [-100..100] into a useful multiplier
+    const cf = (259 * (c + 255)) / (255 * (259 - c)); // classic contrast formula
+
+    // Precompute gamma LUT
+    const gammaLUT = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++) {
+      gammaLUT[i] = Math.max(0, Math.min(255, Math.round(255 * Math.pow(i / 255, 1 / g))));
+    }
+
+    // Ordered dither Bayer 4x4
+    const bayer4 = [
+      [  0,  8,  2, 10],
+      [ 12,  4, 14,  6],
+      [  3, 11,  1,  9],
+      [ 15,  7, 13,  5]
+    ];
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+
+        // Convert to luma
+        const r = data[i], gg = data[i + 1], bb = data[i + 2];
+        let v = (0.299 * r + 0.587 * gg + 0.114 * bb);
+
+        // Brightness
+        v = v + b;
+
+        // Contrast
+        v = cf * (v - 128) + 128;
+
+        // Clamp and gamma
+        v = Math.max(0, Math.min(255, v));
+        v = gammaLUT[v | 0];
+
+        if (mode === 'grayscale') {
+          // leave grayscale
+          data[i] = data[i + 1] = data[i + 2] = v;
+          data[i + 3] = 255;
+          continue;
+        }
+
+        if (mode === 'threshold') {
+          const out = (v >= t) ? 255 : 0;
+          data[i] = data[i + 1] = data[i + 2] = out;
+          data[i + 3] = 255;
+          continue;
+        }
+
+        if (mode === 'ordered') {
+          // map v with bayer threshold
+          const threshold = (bayer4[y & 3][x & 3] + 0.5) * (255 / 16);
+          const out = (v >= threshold) ? 255 : 0;
+          data[i] = data[i + 1] = data[i + 2] = out;
+          data[i + 3] = 255;
+          continue;
+        }
+      }
+    }
+  }
+
+  // --------- Capture (freeze still at higher res than preview) ---------
+  function captureStill() {
+    if (!stream || video.readyState < 2) return;
+
+    // Capture at video resolution (or close)
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+
+    // Draw full frame into printCanvas (still raw)
+    printCanvas.width = vw;
+    printCanvas.height = vh;
+    prctx.drawImage(video, 0, 0, vw, vh);
+
+    // Show captured still in preview too (optional)
+    const img = prctx.getImageData(0, 0, vw, vh);
+    applyEffectsInPlace(img.data, vw, vh);
+    prctx.putImageData(img, 0, 0);
+
+    // Save as data URL for printing pipeline
+    lastCapturedDataURL = printCanvas.toDataURL('image/png');
+    lastCapturedProcessed = true;
+    hint.textContent = "Captured. Ready to print.";
+    btnPrint.disabled = !(qz.websocket.isActive() && printerSelect.value);
+  }
+
+  // --------- Printing with QZ Tray ---------
+  async function connectQZ() {
+    try {
+      await qz.websocket.connect();
+      qzStatus.textContent = "QZ: connected";
+      btnDisconnectQZ.disabled = false;
+      btnLoadPrinters.disabled = false;
+      printerSelect.disabled = false;
+      btnLoadMedia.disabled = false;
+      hint.textContent = "QZ connected. Load printers.";
+    } catch (e) {
+      console.error(e);
+      qzStatus.textContent = "QZ: error";
+      hint.textContent = "Could not connect to QZ Tray. Is it installed and running?";
+    }
+  }
+
+  async function disconnectQZ() {
+    try { await qz.websocket.disconnect(); } catch (_) {}
+    qzStatus.textContent = "QZ: disconnected";
+    btnDisconnectQZ.disabled = true;
+    btnLoadPrinters.disabled = true;
+    printerSelect.disabled = true;
+    btnLoadMedia.disabled = true;
+    mediaSelect.disabled = true;
+    btnPrint.disabled = true;
+  }
+
+  async function loadPrinters() {
+    try {
+      const printers = await qz.printers.find();
+      printerSelect.innerHTML = '';
+      for (const p of printers) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        printerSelect.appendChild(opt);
+      }
+      const savedPrinter = loadSetting('hp_printer', '');
+      if (savedPrinter) {
+        printerSelect.value = savedPrinter;
+      }
+      if (!printerSelect.value && printers.length > 0) {
+        printerSelect.value = printers[0];
+      }
+      hint.textContent = "Printers loaded. Select Brother QL-1110.";
+      btnPrint.disabled = !(lastCapturedDataURL && printerSelect.value);
+      mediaSelect.innerHTML = '<option value="">(driver media)</option>';
+      mediaSelect.disabled = !printerSelect.value;
+      if (printerSelect.value) {
+        await loadMediaSizes();
+      }
+    } catch (e) {
+      console.error(e);
+      hint.textContent = "Failed to list printers. Check QZ permissions.";
+    }
+  }
+
+  async function loadMediaSizes() {
+    if (!qz.websocket.isActive()) {
+      hint.textContent = "QZ not connected.";
+      return;
+    }
+    const printerName = printerSelect.value;
+    if (!printerName) {
+      hint.textContent = "Select a printer first.";
+      return;
+    }
+    try {
+      let sizes = null;
+      if (qz.printers.getPaperSizes) {
+        sizes = await qz.printers.getPaperSizes(printerName);
+      } else if (qz.printers.getPaperSize) {
+        sizes = await qz.printers.getPaperSize(printerName);
+      } else if (qz.printers.getPrinter) {
+        const details = await qz.printers.getPrinter(printerName);
+        if (details && details.options && details.options.size) {
+          sizes = details.options.size;
+        }
+      }
+
+      if (!sizes || sizes.length === 0) {
+        hint.textContent = "No media list from driver. Type the exact media name below.";
+        return;
+      }
+      cachedMediaList = Array.isArray(sizes) ? sizes : [];
+      mediaSelect.innerHTML = '<option value="">(driver media)</option>';
+      for (const s of sizes) {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        mediaSelect.appendChild(opt);
+      }
+      mediaSelect.disabled = false;
+      hint.textContent = "Media list loaded. Pick the exact roll size from the driver.";
+    } catch (e) {
+      console.error(e);
+      hint.textContent = "Failed to load media sizes. Type the exact media name below.";
+    }
+  }
+
+  function normalizeMediaLabel(label) {
+    return String(label || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  function parseMediaSize(label) {
+    const text = normalizeMediaLabel(label);
+    const diaMatch = text.match(/(\d+(?:\.\d+)?)\s*(mm|\")\s*dia/);
+    if (diaMatch) {
+      const val = parseFloat(diaMatch[1]);
+      const mm = diaMatch[2] === 'mm' ? val : (val * 25.4);
+      return { widthMm: mm, heightMm: mm };
+    }
+
+    const mmPair = text.match(/(\d+(?:\.\d+)?)\s*mm\s*x\s*(\d+(?:\.\d+)?)\s*mm/);
+    if (mmPair) {
+      return { widthMm: parseFloat(mmPair[1]), heightMm: parseFloat(mmPair[2]) };
+    }
+
+    const inPair = text.match(/(\d+(?:\.\d+)?)\s*\"\s*x\s*(\d+(?:\.\d+)?)\s*\"/);
+    if (inPair) {
+      return { widthMm: parseFloat(inPair[1]) * 25.4, heightMm: parseFloat(inPair[2]) * 25.4 };
+    }
+
+    return null;
+  }
+
+  function buildSizeFromMediaName(mediaName, fallbackWidthIn, fallbackHeightIn) {
+    const size = mediaName ? parseMediaSize(mediaName) : null;
+    if (size) {
+      return {
+        width: +(size.widthMm / 25.4).toFixed(2),
+        height: +(size.heightMm / 25.4).toFixed(2),
+        units: 'in'
+      };
+    }
+    return {
+      width: +fallbackWidthIn.toFixed(2),
+      height: +fallbackHeightIn.toFixed(2),
+      units: 'in'
+    };
+  }
+
+  function pickClosestMedia() {
+    const { profile, widthMm, heightMm } = getLabelSizeIn();
+    const list = (cachedMediaList && cachedMediaList.length > 0) ? cachedMediaList : KNOWN_MEDIA;
+    let best = '';
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const name of list) {
+      const size = parseMediaSize(name);
+      if (!size) continue;
+      const wDiff = Math.abs(size.widthMm - widthMm);
+      const hDiff = Math.abs(size.heightMm - heightMm);
+      const score = profile.isDieCut ? (wDiff * 2 + hDiff) : wDiff;
+      if (score < bestScore) {
+        bestScore = score;
+        best = name;
+      }
+    }
+
+    if (!best) return;
+    mediaNameInput.value = best;
+    saveSetting('hp_mediaName', best);
+    if (mediaSelect && mediaSelect.options) {
+      const match = Array.from(mediaSelect.options).find(o => normalizeMediaLabel(o.value) === normalizeMediaLabel(best));
+      if (match) mediaSelect.value = match.value;
+    }
+  }
+
+  function pickMediaFromList(list, profile, widthIn, heightIn) {
+    if (!Array.isArray(list) || list.length === 0) return '';
+    if (profile && profile.mediaName) {
+      const exact = list.find(s => normalizeMediaLabel(s) === normalizeMediaLabel(profile.mediaName));
+      if (exact) return exact;
+    }
+
+    if (profile && profile.mediaNameCandidates) {
+      for (const cand of profile.mediaNameCandidates) {
+        const exact = list.find(s => normalizeMediaLabel(s) === normalizeMediaLabel(cand));
+        if (exact) return exact;
+      }
+    }
+
+    const widthMm = Math.round(widthIn * 25.4);
+    const heightMm = Math.round(heightIn * 25.4);
+    const name = list.find(s => {
+      const n = normalizeMediaLabel(s);
+      const mmMatch = n.match(/(\d{2,3})\s*mm/);
+      if (mmMatch && Math.abs(parseInt(mmMatch[1], 10) - widthMm) <= 2) return true;
+      if (n.includes(widthIn.toFixed(1)) || n.includes(String(widthIn))) return true;
+      if (profile && profile.isDieCut) {
+        if (n.includes(heightIn.toFixed(1)) || n.includes(String(heightIn))) return true;
+        if (n.includes(String(heightMm))) return true;
+      }
+      return false;
+    });
+    return name || '';
+  }
+
+  function isMediaNameCompatibleWithWidth(mediaName, widthMm) {
+    if (!mediaName) return true;
+    const n = normalizeMediaLabel(mediaName);
+    const mmMatch = n.match(/(\d{2,3})\s*mm/);
+    if (mmMatch) {
+      return Math.abs(parseInt(mmMatch[1], 10) - widthMm) <= 2;
+    }
+    return true;
+  }
+
+  function renderForLabelFromDataURL(dataURL, applyFx = true) {
+    // Render captured image into a print bitmap sized for the label width at DPI.
+    // Height uses a photo-ish aspect ratio and swaps for orientation.
+    const { profile, widthIn, heightIn, widthMm, heightMm, isLandscape } = getLabelSizeIn();
+    const dpi = parseInt(dpiSel.value, 10);
+    const outW = Math.round(widthIn * dpi);
+    const outH = Math.round(heightIn * dpi);
+    const fitMode = getFitMode();
+
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const cw = outW, ch = outH;
+        const c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+
+        // Fill white background
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, cw, ch);
+
+        // Fit image to label
+        drawFit(ctx, img, cw, ch, fitMode);
+
+        if (applyFx) {
+          // Apply effects in-place at print res
+          const imageData = ctx.getImageData(0, 0, cw, ch);
+          applyEffectsInPlace(imageData.data, cw, ch);
+          ctx.putImageData(imageData, 0, 0);
+        }
+
+        resolve(c.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = dataURL;
+    });
+  }
+
+  async function printCaptured() {
+    if (!qz.websocket.isActive()) {
+      hint.textContent = "QZ not connected.";
+      return;
+    }
+    const printerName = printerSelect.value;
+    if (!printerName) {
+      hint.textContent = "Select a printer first.";
+      return;
+    }
+    if (!lastCapturedDataURL) {
+      hint.textContent = "Capture a photo first.";
+      return;
+    }
+
+    hint.textContent = "Rendering for label...";
+    let finalDataURL = null;
+    try {
+      finalDataURL = await Promise.race([
+        renderForLabelFromDataURL(lastCapturedDataURL, !lastCapturedProcessed),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('render timeout')), 8000))
+      ]);
+    } catch (e) {
+      console.error(e);
+      hint.textContent = "Render failed. Try Capture again.";
+      return;
+    }
+
+    // QZ config
+    const { profile, widthIn, heightIn, widthMm, heightMm, isLandscape } = getLabelSizeIn();
+    const dpi = parseInt(dpiSel.value, 10);
+
+    let mediaName = mediaSelect.value || mediaNameInput.value.trim();
+    if (profile && profile.isDieCut === false) {
+      mediaName = pickMediaFromList(cachedMediaList, profile, widthIn, heightIn);
+      if (!mediaName) {
+        hint.textContent = 'Load Media and select the exact 2.4"/4.0" Continuous Length Tape.';
+        return;
+      }
+    } else if (!mediaName) {
+      mediaName = pickMediaFromList(cachedMediaList, profile, widthIn, heightIn);
+    }
+
+    const sizeCfg = buildSizeFromMediaName(mediaName, widthIn, heightIn);
+
+    const cfgOptions = {
+      scaleContent: false,
+      rasterize: true,
+      orientation: isLandscape ? 'landscape' : 'portrait',
+      size: sizeCfg,
+      density: dpi
+    };
+
+    if (profile.isDieCut && !mediaName) {
+      cfgOptions.media = 'die-cut';
+    }
+
+    if (qz.printers && qz.printers.setPrinter) {
+      try {
+        await qz.printers.setPrinter(printerName, {
+          options: {
+            size: sizeCfg,
+            media: cfgOptions.media || undefined
+          }
+        });
+        debugLine2.textContent = `setPrinter ok: size=${sizeCfg.width}x${sizeCfg.height}${sizeCfg.units} media=${cfgOptions.media || '(none)'}`;
+        if (qz.printers.getPrinter) {
+          const details = await qz.printers.getPrinter(printerName);
+          const currentSize = details && details.options ? details.options.size : undefined;
+          debugLine2.textContent += ` | driver size=${currentSize || '(unknown)'}`;
+        }
+      } catch (e) {
+        console.error(e);
+        debugLine2.textContent = `setPrinter failed: ${e && e.message ? e.message : 'unknown error'}`;
+      }
+    } else {
+      debugLine2.textContent = 'setPrinter not available in this QZ build';
+    }
+
+    const cfg = qz.configs.create(printerName, cfgOptions);
+
+    debugLine.textContent = `send media="${mediaName || '(none)'}" size=${widthMm}x${heightMm}mm profile=${labelProfile.value}`;
+
+    // Send PNG to QZ as base64 pixel data
+    hint.textContent = "Printing...";
+    try {
+      await qz.print(cfg, [{
+        type: 'pixel',
+        format: 'image',
+        flavor: 'base64',
+        data: finalDataURL.split(',')[1]
+      }]);
+      hint.textContent = "Print sent ✅";
+    } catch (e) {
+      console.error(e);
+      hint.textContent = "Print failed. Check QZ permissions/printer/driver.";
+    }
+  }
+
+  // --------- Events ---------
+  btnStartCam.addEventListener('click', startCamera);
+  btnStopCam.addEventListener('click', stopCamera);
+  btnCapture.addEventListener('click', captureStill);
+
+  btnConnectQZ.addEventListener('click', connectQZ);
+  btnDisconnectQZ.addEventListener('click', disconnectQZ);
+  btnLoadPrinters.addEventListener('click', loadPrinters);
+  btnLoadMedia.addEventListener('click', loadMediaSizes);
+  btnUseClosest.addEventListener('click', pickClosestMedia);
+  labelProfile.addEventListener('change', applyProfileToControls);
+  orientation.addEventListener('change', updatePreviewBuffers);
+  printerSelect.addEventListener('change', () => {
+    btnPrint.disabled = !(lastCapturedDataURL && printerSelect.value && qz.websocket.isActive());
+    mediaSelect.innerHTML = '<option value="">(driver media)</option>';
+    mediaSelect.disabled = !printerSelect.value;
+    saveSetting('hp_printer', printerSelect.value);
+  });
+
+  btnPrint.addEventListener('click', printCaptured);
+
+  labelProfile.addEventListener('change', () => saveSetting('hp_profile', labelProfile.value));
+  orientation.addEventListener('change', () => saveSetting('hp_orientation', orientation.value));
+  dpiSel.addEventListener('change', () => saveSetting('hp_dpi', dpiSel.value));
+  effect.addEventListener('change', () => saveSetting('hp_effect', effect.value));
+  brightness.addEventListener('input', () => saveSetting('hp_brightness', brightness.value));
+  contrast.addEventListener('input', () => saveSetting('hp_contrast', contrast.value));
+  gamma.addEventListener('input', () => saveSetting('hp_gamma', gamma.value));
+  thresh.addEventListener('input', () => saveSetting('hp_thresh', thresh.value));
+  mediaNameInput.addEventListener('input', () => saveSetting('hp_mediaName', mediaNameInput.value));
+
+  // Auto-update print readiness if QZ reconnects
+  setInterval(() => {
+    const qzOn = qz && qz.websocket && qz.websocket.isActive && qz.websocket.isActive();
+    btnPrint.disabled = !(qzOn && printerSelect.value && lastCapturedDataURL);
+  }, 1000);
+
+  // Start with helpful hint
+  populateKnownMedia();
+  restoreSettings();
+  hint.textContent = "1) Start Camera  2) Connect QZ  3) Load Printers  4) Capture  5) Print";
+
+  window.addEventListener('load', async () => {
+    await connectQZ();
+    if (qz.websocket.isActive()) {
+      await loadPrinters();
+    }
+  });
+</script>
+</body>
+</html>
