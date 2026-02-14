@@ -174,12 +174,6 @@
     <input id="gamma" type="range" min="50" max="200" value="100" />
   </div>
   <div class="slider">
-    <label>
-      <input id="invertPrint" type="checkbox" />
-      Calibrate (invert print)
-    </label>
-  </div>
-  <div class="row">
     <button id="btnResetCal">Reset Calibration</button>
   </div>
   <div class="slider">
@@ -238,7 +232,6 @@
   const brightness = document.getElementById('brightness');
   const contrast = document.getElementById('contrast');
   const gamma = document.getElementById('gamma');
-  const invertPrint = document.getElementById('invertPrint');
   const btnResetCal = document.getElementById('btnResetCal');
   const settingsPreview = document.getElementById('settingsPreview');
   const spctx = settingsPreview.getContext('2d', { willReadFrequently: true });
@@ -251,7 +244,7 @@
   let lastCapturedCanvas = null;
   let qzSecurityReady = false;
 
-  const SETTINGS_PASSWORD = '1234';
+  const SETTINGS_PASSWORD = 'DC801DC801';
 
   const work = document.createElement('canvas');
   const wctx = work.getContext('2d', { willReadFrequently: true });
@@ -354,13 +347,11 @@
     return lut;
   }
 
-  function getAdjustments(invert) {
+  function getAdjustments() {
     const b = parseInt(brightness.value, 10);
     const c = parseInt(contrast.value, 10);
     const g = parseInt(gamma.value, 10) / 100;
-    if (!invert) return { b, c, g };
-    const invGamma = g !== 0 ? (1 / g) : 1;
-    return { b: -b, c: -c, g: invGamma };
+    return { b, c, g };
   }
 
   function applyGrayscale(imgData, b, c, g) {
@@ -429,7 +420,7 @@
     resizeSettingsPreview();
     drawContain(swctx, src, settingsWork.width, settingsWork.height);
     const img = swctx.getImageData(0, 0, settingsWork.width, settingsWork.height);
-    const adj = getAdjustments(false);
+    const adj = getAdjustments();
     applyGrayscale(img, adj.b, adj.c, adj.g);
     spctx.putImageData(img, 0, 0);
   }
@@ -575,7 +566,7 @@
         ctx.drawImage(src, sx, sy, sw, sh, 0, 0, outW, outH);
 
         const imgData = ctx.getImageData(0, 0, outW, outH);
-        const adj = getAdjustments(invertPrint.checked);
+        const adj = getAdjustments();
         applyGrayscale(imgData, adj.b, adj.c, adj.g);
         ctx.putImageData(imgData, 0, 0);
 
@@ -638,10 +629,6 @@
   brightness.addEventListener('input', renderSettingsPreview);
   contrast.addEventListener('input', renderSettingsPreview);
   gamma.addEventListener('input', renderSettingsPreview);
-  invertPrint.addEventListener('change', () => {
-    saveSetting('pb_invert', invertPrint.checked ? 'true' : 'false');
-    renderSettingsPreview();
-  });
   instantPrint.addEventListener('change', () => {
     saveSetting('pb_instantPrint', instantPrint.checked ? 'true' : 'false');
     updateInstantPrintUI();
@@ -650,11 +637,9 @@
     brightness.value = 0;
     contrast.value = 0;
     gamma.value = 100;
-    invertPrint.checked = false;
     saveSetting('pb_brightness', brightness.value);
     saveSetting('pb_contrast', contrast.value);
     saveSetting('pb_gamma', gamma.value);
-    saveSetting('pb_invert', 'false');
     renderSettingsPreview();
   });
 
@@ -708,7 +693,6 @@
     brightness.value = loadSetting('pb_brightness', brightness.value);
     contrast.value = loadSetting('pb_contrast', contrast.value);
     gamma.value = loadSetting('pb_gamma', gamma.value);
-    invertPrint.checked = loadSetting('pb_invert', 'false') === 'true';
     instantPrint.checked = loadSetting('pb_instantPrint', 'false') === 'true';
     showStatus.checked = loadSetting('pb_showStatus', 'true') === 'true';
     hint.style.display = showStatus.checked ? 'block' : 'none';
